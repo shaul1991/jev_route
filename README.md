@@ -27,17 +27,53 @@ cd jev_route
 
 ## TypeSafe API key
 
-API key는 Git·환경 파일에 저장하지 않습니다. macOS Keychain에만 저장합니다.
+API key는 Git·환경 파일에 저장하지 않습니다. launcher는 **`TYPESAFE_API_KEY` 환경변수 우선**,
+없으면 macOS login Keychain의 `omp-typesafe` 항목을 읽습니다.
+
+### SSH에서 저장 없이 실행
+
+이미 현재 shell에 키를 입력했다면:
+
+```bash
+export TYPESAFE_API_KEY
+~/.local/bin/omp-jev
+```
+
+새로 입력해야 한다면 macOS 기본 zsh에서 다음처럼 숨김 입력합니다.
+키 자체를 명령에 적지 않아 shell history에 남기지 않습니다.
+
+```zsh
+read -rs 'TYPESAFE_API_KEY?TypeSafe API key: '
+printf '\n'
+export TYPESAFE_API_KEY
+~/.local/bin/omp-jev
+```
+
+이 방식은 Keychain을 사용하지 않고 해당 shell과 자식 프로세스의 환경변수에만 키를 둡니다.
+환경변수도 같은 사용자나 권한 있는 프로세스가 읽을 수 있으므로 공개 로그로 출력하지 마세요.
+
+### Keychain에 영구 저장
+
+`User interaction is not allowed`는 API key 인증 실패가 아니라 Keychain 접근 실패입니다.
+GUI terminal에서도 login Keychain이 잠겨 있거나 접근 승인이 필요하면 발생할 수 있습니다.
+먼저 **대상 Mac의 터미널에서 대화형으로** 잠금을 해제합니다(SSH는 `ssh -t m1`로 터미널 확보).
+
+```bash
+security unlock-keychain "$HOME/Library/Keychains/login.keychain-db"
+```
+
+프롬프트에는 **login Keychain 비밀번호**(보통 Mac 로그인 비밀번호)를 입력합니다.
+TypeSafe API key가 아닙니다. 비밀번호를 `-p` 인자로 넣거나 이 저장소에 저장하지 마세요.
+잠금 해제 후, 키를 stdin으로 전달합니다.
 
 ```bash
 printf '%s' "$TYPESAFE_API_KEY" | ./scripts/store-key.sh
 ```
 
-macOS Keychain은 SSH daemon처럼 GUI 세션이 없는 프로세스의 쓰기를 거부할 수 있습니다. 대상 Mac의 **로그인한 GUI terminal**에서 key를 표준 입력으로 전달해 저장하세요. command argument나 repository에 키를 넣지 마세요.
-
-```bash
-printf '%s' '<TypeSafe API key>' | ~/personal/shaul1991/jev_route/scripts/store-key.sh
-```
+저장 스크립트는 API key를 `security`의 프로세스 인자가 아닌 stdin으로 전달하고,
+저장 후 다시 읽어 일치하는지 확인합니다. Keychain 잠금이나 ACL이 계속 접근을 막으면
+로컬 Keychain Access에서 상태를 확인하거나 위 환경변수 실행 방식을 사용하세요.
+모든 프로그램에 접근을 허용하는 `-A` 옵션은 사용하지 않습니다.
 
 ## 실행
 
@@ -45,7 +81,7 @@ printf '%s' '<TypeSafe API key>' | ~/personal/shaul1991/jev_route/scripts/store-
 ~/.local/bin/omp-jev
 ```
 
-launcher는 실행 때 Keychain에서 `TYPESAFE_API_KEY`를 읽고 다음 기본값을 설정합니다.
+launcher는 환경변수 또는 Keychain에서 `TYPESAFE_API_KEY`를 읽고 다음 기본값을 설정합니다.
 
 ```text
 JEV_ROUTER_MODE=active

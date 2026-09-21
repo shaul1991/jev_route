@@ -15,5 +15,6 @@ install -m 600 "$repo_dir/extensions/jev-router.ts" "$agent_dir/extensions/jev-r
 install -m 700 "$repo_dir/bin/omp-jev" "${HOME}/.local/bin/omp-jev"
 
 printf '%s\n' "Installed Jev router in $agent_dir/extensions/jev-router.ts"
-printf '%s\n' "Install a TypeSafe key with: printf '%s' \"\$TYPESAFE_API_KEY\" | $repo_dir/scripts/store-key.sh"
+printf '%s\n' 'For SSH without Keychain storage: export TYPESAFE_API_KEY; ~/.local/bin/omp-jev'
+printf '%s\n' "Optional Keychain storage (unlock login Keychain first): printf '%s' \"\$TYPESAFE_API_KEY\" | $repo_dir/scripts/store-key.sh"
 printf '%s\n' "Start OMP with: ${HOME}/.local/bin/omp-jev"
