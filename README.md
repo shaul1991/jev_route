@@ -33,10 +33,10 @@ API key는 Git·환경 파일에 저장하지 않습니다. macOS Keychain에만
 printf '%s' "$TYPESAFE_API_KEY" | ./scripts/store-key.sh
 ```
 
-다른 Mac에서 local shell 환경에 key가 없다면, 신뢰할 수 있는 원본 Mac에서 SSH stdin을 통해 Keychain에 전달합니다. command argument나 repository에 키를 넣지 마세요.
+macOS Keychain은 SSH daemon처럼 GUI 세션이 없는 프로세스의 쓰기를 거부할 수 있습니다. 대상 Mac의 **로그인한 GUI terminal**에서 key를 표준 입력으로 전달해 저장하세요. command argument나 repository에 키를 넣지 마세요.
 
 ```bash
-printf '%s' "$TYPESAFE_API_KEY" | ssh m1 '~/personal/shaul1991/jev_route/scripts/store-key.sh'
+printf '%s' '<TypeSafe API key>' | ~/personal/shaul1991/jev_route/scripts/store-key.sh
 ```
 
 ## 실행
