@@ -1,0 +1,14 @@
+#!/bin/sh
+set -eu
+
+service="${OMP_JEV_KEYCHAIN_SERVICE:-omp-typesafe}"
+key=$(security find-generic-password -a "$USER" -s "$service" -w 2>/dev/null) || {
+  printf '%s\n' "Missing TypeSafe API key in macOS Keychain service: $service" >&2
+  printf '%s\n' 'Install it with: printf %s "$TYPESAFE_API_KEY" | scripts/store-key.sh' >&2
+  exit 1
+}
+
+export TYPESAFE_API_KEY="$key"
+export JEV_ROUTER_MODE="${JEV_ROUTER_MODE:-active}"
+export JEV_TOOL_RISK_MODE="${JEV_TOOL_RISK_MODE:-observe}"
+exec omp "$@"
