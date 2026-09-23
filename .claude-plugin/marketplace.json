@@ -1,0 +1,16 @@
+{
+  "name": "jev-route",
+  "description": "Jev routing adapters and settings for Oh My Pi and Claude Code.",
+  "owner": {
+    "name": "shaul1991",
+    "url": "https://github.com/shaul1991"
+  },
+  "plugins": [
+    {
+      "name": "jev-router",
+      "source": "./",
+      "description": "Advisory Jev task classification and routing hints for Claude Code.",
+      "version": "0.1.0"
+    }
+  ]
+}

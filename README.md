@@ -64,6 +64,16 @@ cd jev_route
 
 이 설정은 Jev adapter의 tier별 우선 alias만 저장합니다. OMP의 실제 모델 배정(`modelRoles`)은 변경하지 않으므로, 입력한 alias가 OMP에 등록되어 있지 않으면 다음 후보로 fallback합니다. 기존 `<agent-dir>/config/omp.json`은 재설치 때 보존되며, 누락된 신규 기본값만 보충됩니다. `--configure` 없이 설치하면 현재 tier alias 설정도 유지됩니다.
 
+Makefile을 통한 플랫폼 설치:
+
+```bash
+make install                         # 기본값: OMP
+make install PLATFORM=claude         # Claude 사용자 plugin으로 설치
+make install PROFILE=omp-media CONFIGURE=1
+```
+
+`make install omp claude` 형식은 Make의 플랫폼 선택 문법이 아니므로 `PLATFORM=omp` 또는 `PLATFORM=claude`를 사용하세요. Claude 대상은 현재 checkout을 사용자 범위 local marketplace로 등록하고 `jev-router` plugin을 설치합니다. `claude --plugin-dir "$PWD"`는 설치 없이 현재 디렉터리에서 시험할 때 사용합니다.
+
 ## 플랫폼별 설정
 
 - `config/omp.json`: OMP의 작업별 light/deep role 후보, `tierRolesByMode`의 5단계 우선 alias, `fallbackRolesByMode`, thinking level을 설정합니다. 입력값은 OMP `modelRoles`에 정의한 alias 이름이며 provider/model ID를 직접 지정하지 않습니다. 설치 후 활성 `<agent-dir>/config/omp.json`에 저장되며, guided setup은 `./scripts/install.sh [profile] --configure`로 실행합니다.
