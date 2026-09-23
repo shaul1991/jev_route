@@ -1,0 +1,9 @@
+{
+  "mcpServers": {
+    "jev-router": {
+      "type": "stdio",
+      "command": "node",
+      "args": ["${CURSOR_PLUGIN_ROOT}/hooks/cursor-mcp.mjs"]
+    }
+  }
+}

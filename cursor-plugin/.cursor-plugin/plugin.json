@@ -1,0 +1,6 @@
+{
+  "name": "jev-router",
+  "version": "0.1.0",
+  "description": "Advisory task routing for Cursor Agent using Jev classification and tier subagents.",
+  "repository": "https://github.com/shaul1991/jev_route"
+}

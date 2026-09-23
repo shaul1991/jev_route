@@ -73,9 +73,10 @@ make install PROFILE=omp-media CONFIGURE=1
 make install-claude CONFIGURE=1       # TRIVIAL~CRITICAL 모델을 대화형으로 지정
 make install PLATFORM=codex          # Codex plugin + 사용자 범위 tier subagent 설치
 make install-codex CONFIGURE=1        # Codex 5단계 모델을 대화형으로 지정
+make install PLATFORM=cursor        # Cursor local plugin 설치
 ```
 
-`make install omp claude codex` 형식은 Make의 플랫폼 선택 문법이 아니므로 `PLATFORM=omp`, `PLATFORM=claude`, `PLATFORM=codex` 중 하나를 사용하세요. Claude와 Codex 설치는 현재 checkout을 사용자 범위 local marketplace로 등록하고 `jev-router` plugin과 각 플랫폼의 사용자 subagent 5개를 설치합니다. `claude --plugin-dir "$PWD"`는 Claude plugin만 설치 없이 시험할 때 사용합니다.
+`make install omp claude codex cursor` 형식은 Make의 플랫폼 선택 문법이 아니므로 `PLATFORM=omp`, `PLATFORM=claude`, `PLATFORM=codex`, `PLATFORM=cursor` 중 하나를 사용하세요. Claude와 Codex 설치는 현재 checkout을 사용자 범위 local marketplace로 등록하고 `jev-router` plugin과 각 플랫폼의 사용자 subagent 5개를 설치합니다. Cursor 설치는 plugin을 `${CURSOR_HOME:-~/.cursor}/plugins/local/jev-router`에 복사합니다. Cursor에서 local plugin imports를 허용하고 **Developer: Reload Window**로 활성화하세요. `claude --plugin-dir "$PWD"`는 Claude plugin만 설치 없이 시험할 때 사용합니다.
 
 ## 플랫폼별 설정
 
@@ -116,7 +117,15 @@ Codex의 `UserPromptSubmit` hook은 Jev가 분류한 ALM role/work type/mode에 
 
 **Codex에서는 plugin 설치만으로 hook을 신뢰하지 않습니다.** Codex를 시작하고 `/hooks`에서 `jev-router`의 `UserPromptSubmit` hook 내용을 검토한 다음 신뢰해야 실제 자동 분류가 실행됩니다. 설치한 플러그인을 무조건 신뢰하게 하는 우회 플래그는 사용하지 마세요. 모델 가용성 및 조직 제한은 Codex가 결정하며, 사용할 수 없는 모델을 설치 도구가 임의 모델로 대체하지 않습니다.
 
-## TypeSafe API key
+## Cursor IDE (advisory)
+
+`make install PLATFORM=cursor`는 Cursor Plugin을 `${CURSOR_HOME:-~/.cursor}/plugins/local/jev-router`에 설치합니다. Cursor에서 local plugin imports가 허용되어야 하며, 설치 후 **Developer: Reload Window**를 실행하세요. Plugin의 Jev routing rule은 `jev-router` MCP의 `classify_task` 도구를 요청 전에 사용하도록 안내하고, 결과에 따라 `jev-trivial`~`jev-critical` custom subagent를 권장합니다. Cursor Agent가 위임할 때에만 subagent가 별도 context에서 실행됩니다.
+
+Cursor의 `beforeSubmitPrompt` hook은 프롬프트 차단 여부만 받을 수 있고 model context를 덧붙이는 출력은 지원하지 않습니다. 따라서 Cursor 통합은 prompt hook을 가장한 자동 주입을 하지 않고, `sessionStart` context와 MCP 분류 도구를 사용합니다. MCP 도구 승인이 필요할 수 있습니다. `TYPESAFE_API_KEY`가 Cursor 프로세스 환경에 없으면 분류는 사용할 수 없으며 원래 작업은 계속할 수 있습니다. `@jev:fast` 등 명시적 단계는 API key 없이 동작합니다. 코드 블록, 공통 prompt 길이 제한 초과, secret 형태가 감지된 입력은 전송하지 않습니다.
+
+Cursor subagent 모델은 기본 `inherit`입니다. 특정 Cursor model ID가 필요하면 설치한 plugin의 `agents/jev-*.md`에서 `model` 값을 계정에서 사용 가능한 ID로 변경하세요. 모델 지정은 부모 세션의 model을 바꾸거나 가용성·조직 정책을 우회하지 않습니다. 분류와 subagent 제안은 advisory이며 보안 경계가 아닙니다.
+
+Cursor plugin은 Node.js 18+를 대상으로 하며, [Cursor Hooks](https://cursor.com/docs/hooks.md), [Plugins](https://cursor.com/docs/plugins.md), [Subagents](https://cursor.com/docs/subagents.md), [MCP](https://cursor.com/docs/mcp.md)에서 현재 IDE의 동작을 확인하세요.
 
 API key는 Git·환경 파일에 저장하지 않습니다. launcher는 **`TYPESAFE_API_KEY` 환경변수 우선**,
 없으면 macOS login Keychain의 `omp-typesafe` 항목을 읽습니다.

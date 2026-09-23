@@ -1,0 +1,6 @@
+---
+description: Classify Cursor Agent requests with Jev and choose an appropriate tier subagent.
+alwaysApply: true
+---
+
+Before substantive work, call the `jev-router` MCP tool `classify_task` once with the user's current request. Use its returned ALM role, work type, and mode as advisory context. When delegation would help, delegate the actual task to the matching `jev-<mode>` custom subagent; for work that should stay in the parent, proceed there. Explicit `@jev:trivial`, `@jev:fast`, `@jev:normal`, `@jev:deep`, or `@jev:critical` overrides the classifier. If the MCP tool is unavailable or declines classification, continue normally without inventing a route. This recommendation never changes the parent model, forces delegation, or acts as a security boundary.
