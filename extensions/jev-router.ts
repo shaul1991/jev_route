@@ -1,15 +1,17 @@
 import { mkdir, open, readFile, writeFile } from "node:fs/promises"
+import { requestJev } from "../shared/jev-api.mjs"
+import { ALM_ROLE_CRITERIA, buildRoutingQuestions, ROUTING_THRESHOLDS } from "../shared/jev-routing.mjs"
+import ompConfigJson from "../config/omp.json" with { type: "json" }
 
 const ROUTER_MODE_ENV = "JEV_ROUTER_MODE"
 const API_KEY_ENV = "TYPESAFE_API_KEY"
-const API_URL = "https://api.typesafe.ai/v1/systemone"
 const JEV_MODEL = "jev-latest"
 const REQUEST_TIMEOUT_MS = 1_500
-const FAST_CONFIDENCE_MIN = 0.9
-const ROLE_CONFIDENCE_MIN = 0.6
-const WORK_CONFIDENCE_MIN = 0.6
+const FAST_CONFIDENCE_MIN = ROUTING_THRESHOLDS.fastConfidence
+const ROLE_CONFIDENCE_MIN = ROUTING_THRESHOLDS.roleConfidence
+const WORK_CONFIDENCE_MIN = ROUTING_THRESHOLDS.workConfidence
 const POLICY_MATCH_MIN = 0.8
-const MAX_REQUEST_CHARS = 2_000
+const MAX_REQUEST_CHARS = ROUTING_THRESHOLDS.maxRequestChars
 const MAX_APPROVED_POLICIES = 8
 const AUDIT_SAMPLE_RATE = 0.1
 // Named OMP profiles expose their own agent root here; keep telemetry isolated by profile.
@@ -23,7 +25,7 @@ const REQUEST_PREVIEW_CHARS = 160
 const LOG_TAIL_DEFAULT = 10
 const LOG_TAIL_MAX = 50
 
-type Mode = "FAST" | "NORMAL" | "DEEP"
+type Mode = "TRIVIAL" | "FAST" | "NORMAL" | "DEEP" | "CRITICAL"
 type RouterMode = "off" | "observe" | "active"
 type DecisionSource = "auto" | "override" | "fallback"
 type ThinkingLevel = "off" | "minimal" | "low" | "medium" | "high" | "xhigh" | "max"
@@ -74,9 +76,17 @@ type AlmWorkRoute = {
 }
 
 type AlmRoleRoute = {
-  criteria: string
   tasks: Partial<Record<WorkType, AlmWorkRoute>>
   fallback: AlmWorkRoute
+}
+
+type OmpRouterConfig = {
+  version: 1
+  defaultRole: string
+  trivialRoles: string[]
+  criticalPrimaryRole: string
+  thinkingByMode: Record<Mode, ThinkingLevel>
+  routes: Record<AlmRole, AlmRoleRoute>
 }
 
 type Decision = {
@@ -196,108 +206,113 @@ type ExtensionAPI = {
   setThinkingLevel: (level: ThinkingLevel) => void
 }
 
-const ALM_ROUTES: Record<AlmRole, AlmRoleRoute> = {
-  development: {
-    criteria: "Engineer responsible for a codebase, its current behavior, and its technical source of truth.",
-    tasks: {
-      implementation: { light: ["@build", "@task"], deep: ["@diagnose", "@slow", "@build"] },
-      documentation: { light: ["@design", "@build"], deep: ["@architect", "@design"] },
-      verification: { light: ["@test", "@build"], deep: ["@diagnose", "@slow", "@test"] },
-      review: { light: ["@review", "@build"], deep: ["@security", "@slow", "@review"] },
-      investigation: { light: ["@diagnose", "@build"], deep: ["@diagnose", "@slow"] },
-      planning: { light: ["@requirements", "@architect"], deep: ["@architect", "@slow"] },
-    },
-    fallback: { light: ["@build", "@task"], deep: ["@diagnose", "@slow", "@build"] },
-  },
-  product_planning: {
-    criteria: "Product manager or planner responsible for requirements, priorities, user outcomes, and product source-of-truth documents.",
-    tasks: {
-      documentation: { light: ["@plan", "@requirements"], deep: ["@plan", "@slow"] },
-      planning: { light: ["@plan", "@requirements"], deep: ["@plan", "@slow"] },
-      investigation: { light: ["@analyze", "@plan"], deep: ["@analyze", "@slow"] },
-      review: { light: ["@review", "@plan"], deep: ["@architect", "@slow"] },
-    },
-    fallback: { light: ["@plan", "@requirements", "@default"], deep: ["@plan", "@slow"] },
-  },
-  architecture: {
-    criteria: "Architect responsible for system boundaries, technical direction, interfaces, and durable design records.",
-    tasks: {
-      implementation: { light: ["@architect", "@build"], deep: ["@architect", "@slow"] },
-      documentation: { light: ["@architect", "@design"], deep: ["@architect", "@slow"] },
-      planning: { light: ["@requirements", "@architect"], deep: ["@architect", "@slow"] },
-      review: { light: ["@architect", "@review"], deep: ["@architect", "@security", "@slow"] },
-      investigation: { light: ["@architect", "@analyze"], deep: ["@architect", "@slow"] },
-    },
-    fallback: { light: ["@architect", "@plan"], deep: ["@architect", "@slow"] },
-  },
-  quality_assurance: {
-    criteria: "Quality engineer responsible for acceptance criteria, regressions, verification, and defect prevention.",
-    tasks: {
-      verification: { light: ["@test", "@review"], deep: ["@diagnose", "@slow", "@test"] },
-      review: { light: ["@review", "@test"], deep: ["@security", "@slow", "@review"] },
-      documentation: { light: ["@test", "@review"], deep: ["@review", "@slow"] },
-      investigation: { light: ["@diagnose", "@test"], deep: ["@diagnose", "@slow"] },
-    },
-    fallback: { light: ["@test", "@review"], deep: ["@diagnose", "@slow"] },
-  },
-  operations_delivery: {
-    criteria: "Operations or delivery engineer responsible for build, CI, deployment, runtime configuration, and release execution.",
-    tasks: {
-      implementation: { light: ["@deploy", "@build"], deep: ["@architect", "@slow", "@deploy"] },
-      delivery: { light: ["@deploy", "@build"], deep: ["@deploy", "@slow", "@build"] },
-      documentation: { light: ["@deploy", "@design"], deep: ["@architect", "@deploy"] },
-      verification: { light: ["@test", "@deploy"], deep: ["@diagnose", "@slow", "@deploy"] },
-      investigation: { light: ["@diagnose", "@deploy"], deep: ["@diagnose", "@slow"] },
-    },
-    fallback: { light: ["@deploy", "@build"], deep: ["@architect", "@slow", "@deploy"] },
-  },
-  governance_risk: {
-    criteria: "Security, compliance, or governance owner responsible for risk controls, permissions, and policy evidence.",
-    tasks: {
-      review: { light: ["@security", "@review"], deep: ["@security", "@slow"] },
-      documentation: { light: ["@security", "@review"], deep: ["@security", "@slow"] },
-      planning: { light: ["@security", "@architect"], deep: ["@security", "@slow"] },
-      investigation: { light: ["@security", "@analyze"], deep: ["@security", "@slow"] },
-    },
-    fallback: { light: ["@security", "@review"], deep: ["@security", "@slow"] },
-  },
-  analysis_research: {
-    criteria: "Analyst or researcher responsible for evidence gathering, option comparison, and explanatory analysis.",
-    tasks: {
-      investigation: { light: ["@analyze", "@smol"], deep: ["@analyze", "@slow"] },
-      documentation: { light: ["@analyze", "@plan"], deep: ["@analyze", "@slow"] },
-      planning: { light: ["@analyze", "@plan"], deep: ["@analyze", "@slow"] },
-      review: { light: ["@analyze", "@review"], deep: ["@analyze", "@slow"] },
-    },
-    fallback: { light: ["@analyze", "@default"], deep: ["@analyze", "@slow"] },
-  },
-  general: {
-    criteria: "The responsible ALM role is not clear from the request.",
-    tasks: {},
-    fallback: { light: ["@default"], deep: ["@slow"] },
-  },
+const MODE_NAMES: Mode[] = ["TRIVIAL", "FAST", "NORMAL", "DEEP", "CRITICAL"]
+const ALM_ROLE_NAMES = Object.keys(ALM_ROLE_CRITERIA) as AlmRole[]
+const WORK_TYPE_NAMES: WorkType[] = [
+  "implementation", "documentation", "planning", "verification",
+  "review", "investigation", "delivery", "general",
+]
+
+function parseOmpRouterConfig(value: unknown): OmpRouterConfig {
+  const invalid = (): never => {
+    throw new Error("Invalid OMP adapter settings in config/omp.json")
+  }
+  const root = asRecord(value)
+  if (root?.version !== 1) return invalid()
+
+  const isAlias = (candidate: unknown): candidate is string =>
+    typeof candidate === "string" && /^@[A-Za-z0-9_-]{1,64}$/.test(candidate)
+  const parseAliases = (candidate: unknown): string[] => {
+    if (!Array.isArray(candidate) || candidate.length === 0 || candidate.length > 12) return invalid()
+    if (!candidate.every(isAlias)) return invalid()
+    return candidate.slice()
+  }
+  const parseWorkRoute = (candidate: unknown): AlmWorkRoute => {
+    const route = asRecord(candidate)
+    if (!route) return invalid()
+    return {
+      light: parseAliases(route.light),
+      deep: parseAliases(route.deep),
+    }
+  }
+
+  if (!isAlias(root.defaultRole) || !isAlias(root.criticalPrimaryRole)) return invalid()
+  const trivialRoles = parseAliases(root.trivialRoles)
+  const rawThinking = asRecord(root.thinkingByMode)
+  const thinkingLevels = ["off", "minimal", "low", "medium", "high", "xhigh", "max"]
+  if (!rawThinking) return invalid()
+  const thinkingByMode = {} as Record<Mode, ThinkingLevel>
+  for (const mode of MODE_NAMES) {
+    const level = rawThinking[mode]
+    if (typeof level !== "string" || !thinkingLevels.includes(level)) return invalid()
+    thinkingByMode[mode] = level as ThinkingLevel
+  }
+
+  const rawRoutes = asRecord(root.routes)
+  if (!rawRoutes || Object.keys(rawRoutes).length !== ALM_ROLE_NAMES.length) return invalid()
+  const routes = {} as Record<AlmRole, AlmRoleRoute>
+  for (const almRole of ALM_ROLE_NAMES) {
+    const roleRoute = asRecord(rawRoutes[almRole])
+    const rawTasks = asRecord(roleRoute?.tasks)
+    if (!roleRoute || !rawTasks) return invalid()
+    const tasks: Partial<Record<WorkType, AlmWorkRoute>> = {}
+    for (const [workType, route] of Object.entries(rawTasks)) {
+      if (!WORK_TYPE_NAMES.includes(workType as WorkType)) return invalid()
+      tasks[workType as WorkType] = parseWorkRoute(route)
+    }
+    routes[almRole] = { tasks, fallback: parseWorkRoute(roleRoute.fallback) }
+  }
+  return {
+    version: 1,
+    defaultRole: root.defaultRole,
+    trivialRoles,
+    criticalPrimaryRole: root.criticalPrimaryRole,
+    thinkingByMode,
+    routes,
+  }
 }
 
-const THINKING_BY_MODE: Record<Mode, ThinkingLevel> = {
-  FAST: "low",
-  NORMAL: "medium",
-  DEEP: "xhigh",
-}
+const OMP_CONFIG = parseOmpRouterConfig(ompConfigJson)
+const ALM_ROUTES = OMP_CONFIG.routes
 
 function routeFor(almRole: AlmRole, workType: WorkType, mode: Mode): Route {
   const roleRoute = ALM_ROUTES[almRole]
   const workRoute = roleRoute.tasks[workType] ?? roleRoute.fallback
-  const configured = mode === "DEEP" ? workRoute.deep : workRoute.light
+  let configured: string[]
+  switch (mode) {
+    case "TRIVIAL":
+      configured = OMP_CONFIG.trivialRoles
+      break
+    case "FAST":
+      configured = workRoute.light.slice(0, 1)
+      break
+    case "NORMAL":
+      configured = workRoute.light
+      break
+    case "DEEP":
+      configured = workRoute.deep
+      break
+    case "CRITICAL":
+      configured = [
+        OMP_CONFIG.criticalPrimaryRole,
+        ...workRoute.deep.filter(role => role !== OMP_CONFIG.criticalPrimaryRole),
+      ]
+      break
+  }
   return {
-    roles: configured.includes("@default") ? configured : [...configured, "@default"],
-    thinking: THINKING_BY_MODE[mode],
+    roles: configured.includes(OMP_CONFIG.defaultRole)
+      ? configured
+      : [...configured, OMP_CONFIG.defaultRole],
+    thinking: OMP_CONFIG.thinkingByMode[mode],
   }
 }
 
 const MODE_RANK: Record<Mode, number> = {
-  FAST: 0,
-  NORMAL: 1,
-  DEEP: 2,
+  TRIVIAL: 0,
+  FAST: 1,
+  NORMAL: 2,
+  DEEP: 3,
+  CRITICAL: 4,
 }
 
 const CORRECTION_TEMPLATES: Record<Exclude<AuditCategory, "unknown">, Omit<RoutingPolicy, "id" | "status" | "evidenceCount" | "lastReviewed">> = {
@@ -307,14 +322,14 @@ const CORRECTION_TEMPLATES: Record<Exclude<AuditCategory, "unknown">, Omit<Routi
     reason: "Schema and persistent-data changes need at least normal implementation and verification.",
   },
   auth_permissions: {
-    minMode: "DEEP",
+    minMode: "CRITICAL",
     condition: "The request changes authentication, authorization, permissions, identity, or access control.",
-    reason: "Identity and authorization changes require a high-risk review path.",
+    reason: "Identity and authorization changes require the highest-risk routing path.",
   },
   payment_sensitive: {
-    minMode: "DEEP",
+    minMode: "CRITICAL",
     condition: "The request changes payments, financial amounts, secrets, credentials, or sensitive-data handling.",
-    reason: "Financial and sensitive-data changes require a high-risk review path.",
+    reason: "Financial and sensitive-data changes require the highest-risk routing path.",
   },
   concurrency_transaction: {
     minMode: "DEEP",
@@ -377,12 +392,12 @@ function observeBashRisk(event: unknown): ToolRiskObservation | undefined {
 }
 
 function parseOverride(prompt: string): { mode?: Mode; prompt: string } {
-  const match = /^\s*@jev:(auto|fast|normal|deep)\b\s*/i.exec(prompt)
+  const match = /^\s*@jev:(auto|trivial|fast|normal|deep|critical)\b\s*/i.exec(prompt)
   if (!match) return { prompt }
 
   const promptWithoutPrefix = prompt.slice(match[0].length)
   const requestedMode = match[1].toUpperCase()
-  if (requestedMode === "FAST" || requestedMode === "NORMAL" || requestedMode === "DEEP") {
+  if (requestedMode === "TRIVIAL" || requestedMode === "FAST" || requestedMode === "NORMAL" || requestedMode === "DEEP" || requestedMode === "CRITICAL") {
     return { mode: requestedMode, prompt: promptWithoutPrefix }
   }
   return { prompt: promptWithoutPrefix }
@@ -422,7 +437,7 @@ function asRecord(value: unknown): Record<string, unknown> | undefined {
 }
 
 function asMode(value: unknown): Mode | undefined {
-  return value === "FAST" || value === "NORMAL" || value === "DEEP" ? value : undefined
+  return value === "TRIVIAL" || value === "FAST" || value === "NORMAL" || value === "DEEP" || value === "CRITICAL" ? value : undefined
 }
 
 function asPolicyStatus(value: unknown): PolicyStatus | undefined {
@@ -574,9 +589,10 @@ function readChoiceAnswer(payload: unknown, id: string): {
 }
 
 function decideMode(choice: unknown, confidence: unknown): Mode | undefined {
-  if (choice !== "FAST" && choice !== "NORMAL" && choice !== "DEEP") return undefined
-  if (choice === "DEEP") return "DEEP"
+  if (choice !== "TRIVIAL" && choice !== "FAST" && choice !== "NORMAL" && choice !== "DEEP" && choice !== "CRITICAL") return undefined
+  if (choice === "TRIVIAL" && typeof confidence === "number" && confidence >= ROUTING_THRESHOLDS.trivialConfidence) return "TRIVIAL"
   if (choice === "FAST" && typeof confidence === "number" && confidence >= FAST_CONFIDENCE_MIN) return "FAST"
+  if (choice === "DEEP" || choice === "CRITICAL") return choice
   return "NORMAL"
 }
 
@@ -612,36 +628,7 @@ async function queryJev(prompt: string): Promise<Decision> {
   const startedAt = Date.now()
   const controller = new AbortController()
   const timer = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS)
-  const questions: Record<string, unknown> = {
-    alm_role: {
-      type: "choice",
-      instructions: "Which ALM role owns the source of truth and primary accountability for this request? Choose the role before considering the work artifact.",
-      criteria: Object.fromEntries(Object.entries(ALM_ROUTES).map(([role, route]) => [role, route.criteria])),
-    },
-    work_type: {
-      type: "choice",
-      instructions: "What is the primary work artifact or activity in this request? This is independent of the ALM role that owns it.",
-      criteria: {
-        implementation: "Change executable code, configuration, infrastructure, or other implemented behavior.",
-        documentation: "Create or update a durable document, specification, explanation, or source-of-truth record.",
-        planning: "Define requirements, priorities, milestones, decisions, or an execution plan.",
-        verification: "Test, validate, reproduce, or establish acceptance evidence.",
-        review: "Inspect an existing artifact for quality, correctness, risk, or policy conformance.",
-        investigation: "Diagnose, research, explain, compare, or find the cause of an issue.",
-        delivery: "Build, package, release, deploy, or operate a delivered system.",
-        general: "No single work artifact or activity is clear.",
-      },
-    },
-    task_mode: {
-      type: "choice",
-      instructions: "Which implementation depth is appropriate for this developer request? Approved routing policies are separate hard floors; select depth from the request itself.",
-      criteria: {
-        FAST: "A localized, obvious, and reversible change. It needs no schema, authentication, payment, concurrency, public-contract, root-cause, or broad repository analysis.",
-        NORMAL: "A bounded ordinary implementation or feature, possibly across related files. Standard implementation and verification are sufficient.",
-        DEEP: "An unknown root cause, concurrency or transaction issue, migration, authentication, payment, public API compatibility concern, architecture change, or high-risk refactoring.",
-      },
-    },
-  }
+  const questions: Record<string, unknown> = buildRoutingQuestions()
 
   for (let index = 0; index < policies.length; index++) {
     const policy = policies[index]
@@ -656,19 +643,11 @@ async function queryJev(prompt: string): Promise<Decision> {
   }
 
   try {
-    const response = await fetch(API_URL, {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${process.env[API_KEY_ENV]}`,
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({
-        state: { request: prompt },
-        model: JEV_MODEL,
-        questions,
-      }),
-      signal: controller.signal,
-    })
+    const response = await requestJev({
+      state: { request: prompt },
+      model: JEV_MODEL,
+      questions,
+    }, process.env[API_KEY_ENV], controller.signal)
 
     const payload: unknown = await response.json().catch(() => undefined)
     if (!response.ok) throw new Error(`http_${response.status}`)
@@ -720,44 +699,36 @@ async function queryToolRisk(observation: ToolRiskObservation): Promise<ToolRisk
   const controller = new AbortController()
   const timer = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS)
   try {
-    const response = await fetch(API_URL, {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${process.env[API_KEY_ENV]}`,
-        "Content-Type": "application/json",
+    const response = await requestJev({
+      // Never send the command, paths, argument values, or file contents. Only locally-derived signals.
+      state: {
+        tool: observation.toolName,
+        command_chars: observation.commandChars,
+        risk_signals: observation.signals,
       },
-      body: JSON.stringify({
-        // Never send the command, paths, argument values, or file contents. Only locally-derived signals.
-        state: {
-          tool: observation.toolName,
-          command_chars: observation.commandChars,
-          risk_signals: observation.signals,
-        },
-        model: JEV_MODEL,
-        questions: {
-          risk_level: {
-            type: "choice",
-            instructions: "Classify the risk of this tool operation from its tool type and locally-derived risk signals. Do not infer unprovided command details.",
-            criteria: {
-              safe: "Read-only or reversible local operation without meaningful external, destructive, privileged, or credential risk.",
-              guarded: "Local operation needs ordinary review but is not destructive, credential-related, or an external side effect.",
-              destructive: "May delete, irreversibly rewrite, or remove local or infrastructure data.",
-              external: "May send data to, publish to, mutate, or control an external system or network endpoint.",
-              credential: "May expose, manipulate, or contain secrets, credentials, tokens, or private keys.",
-            },
-          },
-          requires_confirmation: {
-            type: "noul",
-            instructions: "Would this operation normally require explicit human confirmation before execution in a developer harness?",
-            criteria: {
-              true: "Destructive, externally mutating, privileged, or credential-sensitive operation.",
-              false: "Read-only or ordinary reversible local operation.",
-            },
+      model: JEV_MODEL,
+      questions: {
+        risk_level: {
+          type: "choice",
+          instructions: "Classify the risk of this tool operation from its tool type and locally-derived risk signals. Do not infer unprovided command details.",
+          criteria: {
+            safe: "Read-only or reversible local operation without meaningful external, destructive, privileged, or credential risk.",
+            guarded: "Local operation needs ordinary review but is not destructive, credential-related, or an external side effect.",
+            destructive: "May delete, irreversibly rewrite, or remove local or infrastructure data.",
+            external: "May send data to, publish to, mutate, or control an external system or network endpoint.",
+            credential: "May expose, manipulate, or contain secrets, credentials, tokens, or private keys.",
           },
         },
-      }),
-      signal: controller.signal,
-    })
+        requires_confirmation: {
+          type: "noul",
+          instructions: "Would this operation normally require explicit human confirmation before execution in a developer harness?",
+          criteria: {
+            true: "Destructive, externally mutating, privileged, or credential-sensitive operation.",
+            false: "Read-only or ordinary reversible local operation.",
+          },
+        },
+      },
+    }, process.env[API_KEY_ENV], controller.signal)
     const payload: unknown = await response.json().catch(() => undefined)
     if (!response.ok) throw new Error(`http_${response.status}`)
     const level = readChoiceAnswer(payload, "risk_level")
@@ -812,46 +783,38 @@ async function queryAudit(run: AuditRun): Promise<AuditDecision> {
   const controller = new AbortController()
   const timer = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS)
   try {
-    const response = await fetch(API_URL, {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${process.env[API_KEY_ENV]}`,
-        "Content-Type": "application/json",
+    const response = await requestJev({
+      state: {
+        request: run.request,
+        audit: auditState(run),
       },
-      body: JSON.stringify({
-        state: {
-          request: run.request,
-          audit: auditState(run),
-        },
-        model: JEV_MODEL,
-        questions: {
-          route_audit: {
-            type: "choice",
-            instructions: "Assess the selected implementation route using only `request` and `audit`. Do not infer source-code facts that are absent.",
-            criteria: {
-              UNDER_ROUTED: "The request or execution outcome indicates the selected mode was too low and a more capable route was warranted.",
-              CORRECT: "The request and execution outcome support the selected mode as appropriate.",
-              OVER_ROUTED: "The request and execution outcome support a lower mode as sufficient.",
-              INCONCLUSIVE: "The available request and outcome signals do not establish whether the selected mode was appropriate.",
-            },
-          },
-          correction_category: {
-            type: "choice",
-            instructions: "If a routing correction is warranted, which single category best describes it? Return unknown unless the category is explicit in `request`.",
-            criteria: {
-              persistence_schema: "Database migrations, persistent-data schema, or stored-data representation.",
-              auth_permissions: "Authentication, authorization, permissions, identity, or access control.",
-              payment_sensitive: "Payments, financial amounts, credentials, secrets, or sensitive-data handling.",
-              concurrency_transaction: "Concurrency, locking, retries, idempotency, transactions, or consistency.",
-              public_contract: "Public API, externally consumed schema, compatibility, or caller contract.",
-              broad_refactor: "Broad cross-cutting refactor, repository-wide analysis, or unknown root-cause investigation.",
-              unknown: "No category is explicit enough to record.",
-            },
+      model: JEV_MODEL,
+      questions: {
+        route_audit: {
+          type: "choice",
+          instructions: "Assess the selected implementation route using only `request` and `audit`. Do not infer source-code facts that are absent.",
+          criteria: {
+            UNDER_ROUTED: "The request or execution outcome indicates the selected mode was too low and a more capable route was warranted.",
+            CORRECT: "The request and execution outcome support the selected mode as appropriate.",
+            OVER_ROUTED: "The request and execution outcome support a lower mode as sufficient.",
+            INCONCLUSIVE: "The available request and outcome signals do not establish whether the selected mode was appropriate.",
           },
         },
-      }),
-      signal: controller.signal,
-    })
+        correction_category: {
+          type: "choice",
+          instructions: "If a routing correction is warranted, which single category best describes it? Return unknown unless the category is explicit in `request`.",
+          criteria: {
+            persistence_schema: "Database migrations, persistent-data schema, or stored-data representation.",
+            auth_permissions: "Authentication, authorization, permissions, identity, or access control.",
+            payment_sensitive: "Payments, financial amounts, credentials, secrets, or sensitive-data handling.",
+            concurrency_transaction: "Concurrency, locking, retries, idempotency, transactions, or consistency.",
+            public_contract: "Public API, externally consumed schema, compatibility, or caller contract.",
+            broad_refactor: "Broad cross-cutting refactor, repository-wide analysis, or unknown root-cause investigation.",
+            unknown: "No category is explicit enough to record.",
+          },
+        },
+      },
+    }, process.env[API_KEY_ENV], controller.signal)
 
     const payload: unknown = await response.json().catch(() => undefined)
     if (!response.ok) throw new Error(`http_${response.status}`)
@@ -1049,7 +1012,7 @@ async function promoteCandidate(id: string): Promise<"promoted" | "not_found" | 
 
 function shouldAudit(run: AuditRun): boolean {
   if (run.routerMode !== "active" || !run.applied || run.decision.source !== "auto") return false
-  return run.decision.mode === "FAST"
+  return run.decision.mode === "TRIVIAL" || run.decision.mode === "FAST"
     || run.toolErrors > 0
     || run.retries > 0
     || run.compactions > 0
@@ -1124,7 +1087,7 @@ function modelLabel(model: unknown): string {
 }
 
 function routeLabel(route: Route, selection?: RouteSelection): string {
-  const role = selection?.role ?? route.roles[0] ?? "@default"
+  const role = selection?.role ?? route.roles[0] ?? OMP_CONFIG.defaultRole
   return `${role} (${modelLabel(selection?.model)}):${route.thinking}`
 }
 
@@ -1220,7 +1183,11 @@ function collectRoleCoverage(): Record<string, RoleCoverage> {
   for (const roleRoute of Object.values(ALM_ROUTES)) {
     const routes = [...Object.values(roleRoute.tasks), roleRoute.fallback]
     for (const route of routes) {
-      for (const candidates of [route.light, route.deep]) {
+      const critical = [
+        OMP_CONFIG.criticalPrimaryRole,
+        ...route.deep.filter(role => role !== OMP_CONFIG.criticalPrimaryRole),
+      ]
+      for (const candidates of [route.light, route.deep, OMP_CONFIG.trivialRoles, critical]) {
         for (let index = 0; index < candidates.length; index++) {
           const role = candidates[index].slice(1)
           const entry = coverage[role] ?? { primaryRoutes: 0, fallbackRoutes: 0 }
@@ -1235,7 +1202,19 @@ function collectRoleCoverage(): Record<string, RoleCoverage> {
 }
 
 function routeCandidates(route: AlmWorkRoute): string {
-  return `FAST/NORMAL ${route.light.join(" → ")}; DEEP ${route.deep.join(" → ")}`
+  const critical = [
+    OMP_CONFIG.criticalPrimaryRole,
+    ...route.deep.filter(role => role !== OMP_CONFIG.criticalPrimaryRole),
+  ]
+  const trivial = OMP_CONFIG.trivialRoles.join(" → ")
+  const fast = route.light.slice(0, 1).join(" → ") || OMP_CONFIG.defaultRole
+  return [
+    `TRIVIAL ${trivial}`,
+    `FAST ${fast}`,
+    `NORMAL ${route.light.join(" → ")}`,
+    `DEEP ${route.deep.join(" → ")}`,
+    `CRITICAL ${critical.join(" → ")}`,
+  ].join("; ")
 }
 
 /** `/jev roles` — Jev 경로가 실제 OMP 모델 역할로 resolve되는지와 영향 범위를 보여준다. */
@@ -1418,7 +1397,7 @@ export default function (pi: ExtensionAPI): void {
         const keyState = process.env[API_KEY_ENV] ? "present" : "missing"
         report(
           ctx,
-          `Jev router: ${configuredMode()}; API key ${keyState}\nALM role → work type → OMP model role; FAST:low, NORMAL:medium, DEEP:xhigh\n\`/jev roles\` audits assigned models; \`/jev roles routes\` prints the full classification map; \`/jev log [n]\` shows routing history; \`/jev risk\` shows observe-only bash risk telemetry.`,
+          `Jev router: ${configuredMode()}; API key ${keyState}\nALM role → work type → OMP model role; TRIVIAL:minimal, FAST:low, NORMAL:medium, DEEP:high, CRITICAL:xhigh\n\`/jev roles\` audits assigned models; \`/jev roles routes\` prints all five tier mappings; \`/jev log [n]\` shows routing history; \`/jev risk\` shows observe-only bash risk telemetry.`,
         )
         return
       }

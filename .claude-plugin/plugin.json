@@ -1,0 +1,5 @@
+{
+  "name": "jev-router",
+  "description": "Advisory Jev task classification and routing hints for Claude Code.",
+  "version": "0.1.0"
+}

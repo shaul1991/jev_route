@@ -1,0 +1,86 @@
+{
+  "version": 1,
+  "defaultRole": "@default",
+  "trivialRoles": ["@tiny", "@smol", "@default"],
+  "criticalPrimaryRole": "@slow",
+  "thinkingByMode": {
+    "TRIVIAL": "minimal",
+    "FAST": "low",
+    "NORMAL": "medium",
+    "DEEP": "high",
+    "CRITICAL": "xhigh"
+  },
+  "routes": {
+    "development": {
+      "tasks": {
+        "implementation": { "light": ["@build", "@task"], "deep": ["@diagnose", "@slow", "@build"] },
+        "documentation": { "light": ["@design", "@build"], "deep": ["@architect", "@design"] },
+        "verification": { "light": ["@test", "@build"], "deep": ["@diagnose", "@slow", "@test"] },
+        "review": { "light": ["@review", "@build"], "deep": ["@security", "@slow", "@review"] },
+        "investigation": { "light": ["@diagnose", "@build"], "deep": ["@diagnose", "@slow"] },
+        "planning": { "light": ["@requirements", "@architect"], "deep": ["@architect", "@slow"] }
+      },
+      "fallback": { "light": ["@build", "@task"], "deep": ["@diagnose", "@slow", "@build"] }
+    },
+    "product_planning": {
+      "tasks": {
+        "documentation": { "light": ["@plan", "@requirements"], "deep": ["@plan", "@slow"] },
+        "planning": { "light": ["@plan", "@requirements"], "deep": ["@plan", "@slow"] },
+        "investigation": { "light": ["@analyze", "@plan"], "deep": ["@analyze", "@slow"] },
+        "review": { "light": ["@review", "@plan"], "deep": ["@architect", "@slow"] }
+      },
+      "fallback": { "light": ["@plan", "@requirements", "@default"], "deep": ["@plan", "@slow"] }
+    },
+    "architecture": {
+      "tasks": {
+        "implementation": { "light": ["@architect", "@build"], "deep": ["@architect", "@slow"] },
+        "documentation": { "light": ["@architect", "@design"], "deep": ["@architect", "@slow"] },
+        "planning": { "light": ["@requirements", "@architect"], "deep": ["@architect", "@slow"] },
+        "review": { "light": ["@architect", "@review"], "deep": ["@architect", "@security", "@slow"] },
+        "investigation": { "light": ["@architect", "@analyze"], "deep": ["@architect", "@slow"] }
+      },
+      "fallback": { "light": ["@architect", "@plan"], "deep": ["@architect", "@slow"] }
+    },
+    "quality_assurance": {
+      "tasks": {
+        "verification": { "light": ["@test", "@review"], "deep": ["@diagnose", "@slow", "@test"] },
+        "review": { "light": ["@review", "@test"], "deep": ["@security", "@slow", "@review"] },
+        "documentation": { "light": ["@test", "@review"], "deep": ["@review", "@slow"] },
+        "investigation": { "light": ["@diagnose", "@test"], "deep": ["@diagnose", "@slow"] }
+      },
+      "fallback": { "light": ["@test", "@review"], "deep": ["@diagnose", "@slow"] }
+    },
+    "operations_delivery": {
+      "tasks": {
+        "implementation": { "light": ["@deploy", "@build"], "deep": ["@architect", "@slow", "@deploy"] },
+        "delivery": { "light": ["@deploy", "@build"], "deep": ["@deploy", "@slow", "@build"] },
+        "documentation": { "light": ["@deploy", "@design"], "deep": ["@architect", "@deploy"] },
+        "verification": { "light": ["@test", "@deploy"], "deep": ["@diagnose", "@slow", "@deploy"] },
+        "investigation": { "light": ["@diagnose", "@deploy"], "deep": ["@diagnose", "@slow"] }
+      },
+      "fallback": { "light": ["@deploy", "@build"], "deep": ["@architect", "@slow", "@deploy"] }
+    },
+    "governance_risk": {
+      "tasks": {
+        "review": { "light": ["@security", "@review"], "deep": ["@security", "@slow"] },
+        "documentation": { "light": ["@security", "@review"], "deep": ["@security", "@slow"] },
+        "planning": { "light": ["@security", "@architect"], "deep": ["@security", "@slow"] },
+        "investigation": { "light": ["@security", "@analyze"], "deep": ["@security", "@slow"] }
+      },
+      "fallback": { "light": ["@security", "@review"], "deep": ["@security", "@slow"] }
+    },
+    "analysis_research": {
+      "tasks": {
+        "investigation": { "light": ["@analyze", "@smol"], "deep": ["@analyze", "@slow"] },
+        "documentation": { "light": ["@analyze", "@plan"], "deep": ["@analyze", "@slow"] },
+        "planning": { "light": ["@analyze", "@plan"], "deep": ["@analyze", "@slow"] },
+        "review": { "light": ["@analyze", "@review"], "deep": ["@analyze", "@slow"] }
+      },
+      "fallback": { "light": ["@analyze", "@default"], "deep": ["@analyze", "@slow"] }
+    },
+    "general": {
+      "tasks": {},
+      "fallback": { "light": ["@default"], "deep": ["@slow"] }
+    }
+  }
+}
