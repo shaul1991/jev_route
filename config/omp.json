@@ -3,6 +3,20 @@
   "defaultRole": "@default",
   "trivialRoles": ["@tiny", "@smol", "@default"],
   "criticalPrimaryRole": "@slow",
+  "tierRolesByMode": {
+    "TRIVIAL": "@tiny",
+    "FAST": "@smol",
+    "NORMAL": "@default",
+    "DEEP": "@default",
+    "CRITICAL": "@slow"
+  },
+  "fallbackRolesByMode": {
+    "TRIVIAL": [],
+    "FAST": ["@smol"],
+    "NORMAL": [],
+    "DEEP": ["@slow"],
+    "CRITICAL": []
+  },
   "thinkingByMode": {
     "TRIVIAL": "minimal",
     "FAST": "low",

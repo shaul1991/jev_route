@@ -85,6 +85,8 @@ type OmpRouterConfig = {
   defaultRole: string
   trivialRoles: string[]
   criticalPrimaryRole: string
+  tierRolesByMode: Record<Mode, string>
+  fallbackRolesByMode: Record<Mode, string[]>
   thinkingByMode: Record<Mode, ThinkingLevel>
   routes: Record<AlmRole, AlmRoleRoute>
 }
@@ -222,8 +224,8 @@ function parseOmpRouterConfig(value: unknown): OmpRouterConfig {
 
   const isAlias = (candidate: unknown): candidate is string =>
     typeof candidate === "string" && /^@[A-Za-z0-9_-]{1,64}$/.test(candidate)
-  const parseAliases = (candidate: unknown): string[] => {
-    if (!Array.isArray(candidate) || candidate.length === 0 || candidate.length > 12) return invalid()
+  const parseAliases = (candidate: unknown, allowEmpty = false): string[] => {
+    if (!Array.isArray(candidate) || (!allowEmpty && candidate.length === 0) || candidate.length > 12) return invalid()
     if (!candidate.every(isAlias)) return invalid()
     return candidate.slice()
   }
@@ -237,7 +239,20 @@ function parseOmpRouterConfig(value: unknown): OmpRouterConfig {
   }
 
   if (!isAlias(root.defaultRole) || !isAlias(root.criticalPrimaryRole)) return invalid()
+  const rawTierRoles = asRecord(root.tierRolesByMode)
+  if (!rawTierRoles || Object.keys(rawTierRoles).length !== MODE_NAMES.length) return invalid()
+  const tierRolesByMode = {} as Record<Mode, string>
+  for (const mode of MODE_NAMES) {
+    if (!isAlias(rawTierRoles[mode])) return invalid()
+    tierRolesByMode[mode] = rawTierRoles[mode]
+  }
   const trivialRoles = parseAliases(root.trivialRoles)
+  const rawFallbacks = asRecord(root.fallbackRolesByMode)
+  if (!rawFallbacks || Object.keys(rawFallbacks).length !== MODE_NAMES.length) return invalid()
+  const fallbackRolesByMode = {} as Record<Mode, string[]>
+  for (const mode of MODE_NAMES) {
+    fallbackRolesByMode[mode] = parseAliases(rawFallbacks[mode], true)
+  }
   const rawThinking = asRecord(root.thinkingByMode)
   const thinkingLevels = ["off", "minimal", "low", "medium", "high", "xhigh", "max"]
   if (!rawThinking) return invalid()
@@ -267,6 +282,8 @@ function parseOmpRouterConfig(value: unknown): OmpRouterConfig {
     defaultRole: root.defaultRole,
     trivialRoles,
     criticalPrimaryRole: root.criticalPrimaryRole,
+    tierRolesByMode,
+    fallbackRolesByMode,
     thinkingByMode,
     routes,
   }
@@ -275,17 +292,13 @@ function parseOmpRouterConfig(value: unknown): OmpRouterConfig {
 const OMP_CONFIG = parseOmpRouterConfig(ompConfigJson)
 const ALM_ROUTES = OMP_CONFIG.routes
 
-function routeFor(almRole: AlmRole, workType: WorkType, mode: Mode): Route {
-  const roleRoute = ALM_ROUTES[almRole]
-  const workRoute = roleRoute.tasks[workType] ?? roleRoute.fallback
+function candidateRoles(workRoute: AlmWorkRoute, mode: Mode): string[] {
   let configured: string[]
   switch (mode) {
     case "TRIVIAL":
       configured = OMP_CONFIG.trivialRoles
       break
     case "FAST":
-      configured = workRoute.light.slice(0, 1)
-      break
     case "NORMAL":
       configured = workRoute.light
       break
@@ -293,18 +306,23 @@ function routeFor(almRole: AlmRole, workType: WorkType, mode: Mode): Route {
       configured = workRoute.deep
       break
     case "CRITICAL":
-      configured = [
-        OMP_CONFIG.criticalPrimaryRole,
-        ...workRoute.deep.filter(role => role !== OMP_CONFIG.criticalPrimaryRole),
-      ]
+      configured = [OMP_CONFIG.criticalPrimaryRole, ...workRoute.deep]
       break
   }
-  return {
-    roles: configured.includes(OMP_CONFIG.defaultRole)
-      ? configured
-      : [...configured, OMP_CONFIG.defaultRole],
-    thinking: OMP_CONFIG.thinkingByMode[mode],
-  }
+  return [
+    ...new Set([
+      OMP_CONFIG.tierRolesByMode[mode],
+      ...configured,
+      ...OMP_CONFIG.fallbackRolesByMode[mode],
+      OMP_CONFIG.defaultRole,
+    ]),
+  ]
+}
+
+function routeFor(almRole: AlmRole, workType: WorkType, mode: Mode): Route {
+  const roleRoute = ALM_ROUTES[almRole]
+  const workRoute = roleRoute.tasks[workType] ?? roleRoute.fallback
+  return { roles: candidateRoles(workRoute, mode), thinking: OMP_CONFIG.thinkingByMode[mode] }
 }
 
 const MODE_RANK: Record<Mode, number> = {
@@ -1067,14 +1085,19 @@ type RouteSelection = {
   model: unknown
 }
 
-function resolveRoute(ctx: ExtensionContext, route: Route): RouteSelection | undefined {
+function resolveRole(ctx: ExtensionContext, role: string): RouteSelection | undefined {
   try {
-    for (const role of route.roles) {
-      const model = ctx.models?.resolve?.(role)
-      if (model) return { role, model }
-    }
+    const model = ctx.models?.resolve?.(role)
+    return model ? { role, model } : undefined
   } catch {
     return undefined
+  }
+}
+
+function resolveRoute(ctx: ExtensionContext, route: Route): RouteSelection | undefined {
+  for (const role of route.roles) {
+    const selection = resolveRole(ctx, role)
+    if (selection) return selection
   }
   return undefined
 }
@@ -1101,14 +1124,18 @@ function appliedRoute(route: Route, selection?: RouteSelection): AppliedRoute {
 }
 
 async function selectRoute(pi: ExtensionAPI, ctx: ExtensionContext, route: Route): Promise<RouteSelection | undefined> {
-  try {
-    const selection = resolveRoute(ctx, route)
-    if (!selection || !await pi.setModel(selection.model)) return undefined
-    pi.setThinkingLevel(route.thinking)
-    return selection
-  } catch {
-    return undefined
+  for (const role of route.roles) {
+    const selection = resolveRole(ctx, role)
+    if (!selection) continue
+    try {
+      if (!await pi.setModel(selection.model)) continue
+      pi.setThinkingLevel(route.thinking)
+      return selection
+    } catch {
+      // An unavailable candidate must not prevent trying later roles.
+    }
   }
+  return undefined
 }
 
 async function applyDecision(
@@ -1183,11 +1210,8 @@ function collectRoleCoverage(): Record<string, RoleCoverage> {
   for (const roleRoute of Object.values(ALM_ROUTES)) {
     const routes = [...Object.values(roleRoute.tasks), roleRoute.fallback]
     for (const route of routes) {
-      const critical = [
-        OMP_CONFIG.criticalPrimaryRole,
-        ...route.deep.filter(role => role !== OMP_CONFIG.criticalPrimaryRole),
-      ]
-      for (const candidates of [route.light, route.deep, OMP_CONFIG.trivialRoles, critical]) {
+      for (const mode of MODE_NAMES) {
+        const candidates = candidateRoles(route, mode)
         for (let index = 0; index < candidates.length; index++) {
           const role = candidates[index].slice(1)
           const entry = coverage[role] ?? { primaryRoutes: 0, fallbackRoutes: 0 }
@@ -1201,20 +1225,15 @@ function collectRoleCoverage(): Record<string, RoleCoverage> {
   return coverage
 }
 
-function routeCandidates(route: AlmWorkRoute): string {
-  const critical = [
-    OMP_CONFIG.criticalPrimaryRole,
-    ...route.deep.filter(role => role !== OMP_CONFIG.criticalPrimaryRole),
-  ]
-  const trivial = OMP_CONFIG.trivialRoles.join(" → ")
-  const fast = route.light.slice(0, 1).join(" → ") || OMP_CONFIG.defaultRole
-  return [
-    `TRIVIAL ${trivial}`,
-    `FAST ${fast}`,
-    `NORMAL ${route.light.join(" → ")}`,
-    `DEEP ${route.deep.join(" → ")}`,
-    `CRITICAL ${critical.join(" → ")}`,
-  ].join("; ")
+function routeCandidates(ctx: ExtensionContext, route: AlmWorkRoute): string {
+  return MODE_NAMES.map(mode => {
+    const roles = candidateRoles(route, mode)
+    const resolved = resolveRoute(ctx, { roles, thinking: OMP_CONFIG.thinkingByMode[mode] })
+    const target = resolved
+      ? `${resolved.role} = ${modelLabel(resolved.model)}`
+      : "no available model; current model retained"
+    return `${mode} ${roles.join(" → ")} [first resolved: ${target}; thinking ${OMP_CONFIG.thinkingByMode[mode]}]`
+  }).join("; ")
 }
 
 /** `/jev roles` — Jev 경로가 실제 OMP 모델 역할로 resolve되는지와 영향 범위를 보여준다. */
@@ -1222,14 +1241,8 @@ function reportRoleCoverage(ctx: ExtensionContext, includeRoutes: boolean): void
   const coverage = collectRoleCoverage()
   const lines = ["Jev role coverage — change `modelRoles` first, then rerun this command."]
   for (const [role, usage] of Object.entries(coverage).sort(([left], [right]) => left.localeCompare(right))) {
-    let model: unknown
-    try {
-      model = ctx.models?.resolve?.(`@${role}`)
-    } catch {
-      model = undefined
-    }
-    const resolved = modelLabel(model)
-    const state = resolved === "unresolved" ? "MISSING" : resolved
+    const resolved = resolveRole(ctx, `@${role}`)
+    const state = resolved ? modelLabel(resolved.model) : "MISSING"
     lines.push(
       `@${role.padEnd(13)} ${state} — primary ${usage.primaryRoutes}, fallback ${usage.fallbackRoutes}`,
     )
@@ -1238,9 +1251,9 @@ function reportRoleCoverage(ctx: ExtensionContext, includeRoutes: boolean): void
     lines.push("\nJev classification → candidates")
     for (const [almRole, roleRoute] of Object.entries(ALM_ROUTES)) {
       for (const [workType, route] of Object.entries(roleRoute.tasks)) {
-        lines.push(`${almRole}/${workType}: ${routeCandidates(route)}`)
+        lines.push(`${almRole}/${workType}: ${routeCandidates(ctx, route)}`)
       }
-      lines.push(`${almRole}/fallback: ${routeCandidates(roleRoute.fallback)}`)
+      lines.push(`${almRole}/fallback: ${routeCandidates(ctx, roleRoute.fallback)}`)
     }
   }
   lines.push("\nUse `/jev <request>` to classify one request and see its selected model. `/jev log` shows applied history.")

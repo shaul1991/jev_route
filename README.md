@@ -15,15 +15,31 @@ Tool Risk Gate는 원문 command, 경로, 파일 내용, 인자값을 Jev에 전
 
 | 단계 | 의미 | OMP model role 후보 | Thinking |
 | --- | --- | --- | --- |
-| `TRIVIAL` | 읽기 전용 또는 즉시 되돌릴 수 있는 사소한 작업 | `@tiny` → `@smol` → `@default` | minimal |
-| `FAST` | 범위가 좁고 명확한 저위험 변경 | 작업별 light 후보 중 첫 alias | low |
-| `NORMAL` | 일반적인 구현과 표준 검증 | 작업별 전체 light 후보 | medium |
-| `DEEP` | 원인 불명, 다중 파일 설계, migration, concurrency, public contract | 작업별 deep 후보 | high |
-| `CRITICAL` | 인증·결제·민감 데이터·운영·비가역 고영향 변경 | `@slow` 우선, 이후 작업별 deep 후보 | xhigh |
+| `TRIVIAL` | 읽기 전용 또는 즉시 되돌릴 수 있는 사소한 작업 | tier 우선 alias(기본 `@tiny`) → `@smol` → `@default` | minimal |
+| `FAST` | 범위가 좁고 명확한 저위험 변경 | tier 우선 alias(기본 `@smol`) → 작업별 light 후보 | low |
+| `NORMAL` | 일반적인 구현과 표준 검증 | tier 우선 alias(기본 `@default`) → 작업별 light 후보 | medium |
+| `DEEP` | 원인 불명, 다중 파일 설계, migration, concurrency, public contract | tier 우선 alias(기본 `@default`) → 작업별 deep 후보 → `@slow` | high |
+| `CRITICAL` | 인증·결제·민감 데이터·운영·비가역 고영향 변경 | tier 우선 alias(기본 `@slow`) → 작업별 deep 후보 | xhigh |
 
 `TRIVIAL`은 Jev 신뢰도 0.95 미만이면 `NORMAL`, `FAST`는 0.9 미만이면 `NORMAL`로 승격됩니다. 기본 정책은 schema 변경을 최소 `NORMAL`, 인증·권한과 결제·민감 데이터 변경을 `CRITICAL`, concurrency·public contract·broad refactor를 `DEEP`로 올립니다. `CRITICAL`은 더 강한 모델·추론 경로를 고르는 분류일 뿐, tool 실행을 막거나 승인하는 보안 경계는 아닙니다.
 
-각 `@alias`는 OMP의 활성 profile `modelRoles`에서 실제 모델에 매핑되어야 합니다. `@tiny`, `@smol`, `@default`, `@slow`와 작업별 alias(`@build`, `@test`, `@security` 등)를 구성한 뒤 `/jev roles`로 해석 가능 여부를 확인하세요. `/jev roles routes`는 다섯 단계의 후보 순서를 표시합니다. 사용자 지정은 `@jev:trivial`, `@jev:fast`, `@jev:normal`, `@jev:deep`, `@jev:critical`; 자동 분류는 `@jev:auto`입니다.
+Jev는 OMP의 `modelRoles`를 변경하지 않습니다. 작업별 custom alias(`@build`, `@test`, `@security` 등)를 사용하려면 활성 OMP profile의 `config.yml`에 원하는 모델을 직접 등록하세요. `omp config path`로 활성 agent 디렉터리를 확인한 뒤 해당 디렉터리의 `config.yml`에 다음처럼 설정합니다.
+
+```yaml
+modelRoles:
+  build: provider/model-id
+  test: provider/another-model-id
+```
+
+라우팅은 `tierRolesByMode`의 우선 alias를 먼저 시도한 뒤 작업별 후보, `fallbackRolesByMode`, `defaultRole` 순으로 이어집니다. alias를 찾지 못하거나 모델 전환에 실패하면 다음 후보를 시도하며, 모두 실패하면 현재 모델을 유지합니다. `/jev roles`는 alias별 실제 `provider/model-id` 또는 `MISSING`을 표시하고, `/jev roles routes`는 경로별 전체 후보와 첫 번째로 해석되는 실제 모델을 보여줍니다. 분류를 직접 지정하려면 `@jev:trivial`, `@jev:fast`, `@jev:normal`, `@jev:deep`, `@jev:critical`을 사용합니다. 자동 분류는 `@jev:auto`입니다.
+
+### Alias 구성 가이드
+
+`config/omp.json`의 tier별 우선 alias와 작업별 `light`/`deep` 후보는 **시작용 기본 예시**이며, 모든 사용자에게 효율적인 모델 배정이라는 뜻은 아닙니다. 기본값은 `TRIVIAL=@tiny`, `FAST=@smol`, `NORMAL=@default`, `DEEP=@default`, `CRITICAL=@slow`입니다. 설치 시 `--configure`로 각자 사용할 alias를 정하거나, OMP `modelRoles`를 확인한 뒤 조정하세요.
+
+- 먼저 `/jev roles`에서 각 alias가 실제 어떤 `provider/model-id`로 해석되는지 확인하고, `/jev roles routes`에서 작업별 **후보 순서와 첫 번째로 해석되는 모델**을 확인하세요. 실제 적용 결과는 `/jev log`에서 확인합니다.
+- 모델을 정할 때는 자신의 작업 유형, 모델 가용성, 결과 품질, 비용, 응답 지연을 기준으로 후보 순서를 조정하세요. `@build`나 `@security` 같은 이름은 모델의 능력·전문성을 보증하지 않습니다. `DEEP` 분류만으로 더 비싼 모델이 반드시 필요한 것도 아닙니다.
+- OMP의 `modelRoles`에서 custom alias를 등록하고, Jev의 `config/omp.json`에서 작업별 후보와 단계별 fallback을 따로 조정할 수 있습니다. 둘 중 하나를 바꾼 뒤 경로와 실제 적용 로그를 다시 확인하세요. Jev는 사용자별 최적 모델을 자동 학습하거나 alias를 OMP 설정에 자동 등록하지 않습니다.
 
 ## 설치
 
@@ -39,9 +55,18 @@ cd jev_route
 ./scripts/install.sh omp-media
 ```
 
+설치 과정에서 5단계별 우선 OMP role alias를 지정하려면 `--configure`를 추가하세요. 각 단계에서 기본값을 그대로 쓰거나 사용할 role alias(예: `@smol`, `@my-fast-role`)를 입력할 수 있습니다.
+
+```bash
+./scripts/install.sh --configure
+./scripts/install.sh omp-media --configure
+```
+
+이 설정은 Jev adapter의 tier별 우선 alias만 저장합니다. OMP의 실제 모델 배정(`modelRoles`)은 변경하지 않으므로, 입력한 alias가 OMP에 등록되어 있지 않으면 다음 후보로 fallback합니다. 기존 `<agent-dir>/config/omp.json`은 재설치 때 보존되며, 누락된 신규 기본값만 보충됩니다. `--configure` 없이 설치하면 현재 tier alias 설정도 유지됩니다.
+
 ## 플랫폼별 설정
 
-- `config/omp.json`: OMP의 작업별 light/deep role 후보, 5단계 기본 role, thinking level을 설정합니다. 후보는 활성 profile의 `modelRoles`에 정의된 alias 이름이며 provider/model ID를 직접 지정하지 않습니다. 설치 시 `<agent-dir>/config/omp.json`으로 복사됩니다. 수정한 뒤 `./scripts/install.sh [profile]`을 다시 실행하세요.
+- `config/omp.json`: OMP의 작업별 light/deep role 후보, `tierRolesByMode`의 5단계 우선 alias, `fallbackRolesByMode`, thinking level을 설정합니다. 입력값은 OMP `modelRoles`에 정의한 alias 이름이며 provider/model ID를 직접 지정하지 않습니다. 설치 후 활성 `<agent-dir>/config/omp.json`에 저장되며, guided setup은 `./scripts/install.sh [profile] --configure`로 실행합니다.
 - `config/claude.json`: Claude hook의 `enabled`와 `maxPromptChars`를 설정합니다. 최대 prompt 길이는 공통 안전 한도보다 커질 수 없습니다. 이 설정은 분류 advisory를 조절할 뿐 Claude의 모델이나 agent를 선택하지 않습니다.
 
 ## Claude Code (advisory)
