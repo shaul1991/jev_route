@@ -1,0 +1,5 @@
+name: jev-router
+version: "0.1.0"
+description: Per-turn Jev advisory task routing for Hermes Agent
+provides_hooks:
+  - pre_llm_call

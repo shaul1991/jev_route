@@ -1,6 +1,6 @@
 # jev_route
 
-Oh My Pi(OMP) 확장, Claude Code·Codex advisory 플러그인, macOS 설치 도구입니다.
+OMP 확장, Claude Code·Codex·Cursor·Hermes advisory 플러그인, macOS 설치 도구입니다.
 
 ## 제공 기능
 
@@ -73,16 +73,18 @@ make install PROFILE=omp-media CONFIGURE=1
 make install-claude CONFIGURE=1       # TRIVIAL~CRITICAL 모델을 대화형으로 지정
 make install PLATFORM=codex          # Codex plugin + 사용자 범위 tier subagent 설치
 make install-codex CONFIGURE=1        # Codex 5단계 모델을 대화형으로 지정
-make install PLATFORM=cursor        # Cursor local plugin 설치
+make install PLATFORM=cursor         # Cursor local plugin 설치
+make install PLATFORM=hermes         # Hermes plugin 설치·활성화
 ```
 
-`make install omp claude codex cursor` 형식은 Make의 플랫폼 선택 문법이 아니므로 `PLATFORM=omp`, `PLATFORM=claude`, `PLATFORM=codex`, `PLATFORM=cursor` 중 하나를 사용하세요. Claude와 Codex 설치는 현재 checkout을 사용자 범위 local marketplace로 등록하고 `jev-router` plugin과 각 플랫폼의 사용자 subagent 5개를 설치합니다. Cursor 설치는 plugin을 `${CURSOR_HOME:-~/.cursor}/plugins/local/jev-router`에 복사합니다. Cursor에서 local plugin imports를 허용하고 **Developer: Reload Window**로 활성화하세요. `claude --plugin-dir "$PWD"`는 Claude plugin만 설치 없이 시험할 때 사용합니다.
+`make install omp claude codex cursor hermes` 형식은 Make의 플랫폼 선택 문법이 아니므로 `PLATFORM=omp`, `PLATFORM=claude`, `PLATFORM=codex`, `PLATFORM=cursor`, `PLATFORM=hermes` 중 하나를 사용하세요. Claude와 Codex 설치는 현재 checkout을 사용자 범위 local marketplace로 등록하고 `jev-router` plugin과 각 플랫폼의 사용자 subagent 5개를 설치합니다. Cursor 설치는 plugin을 `${CURSOR_HOME:-~/.cursor}/plugins/local/jev-router`에 복사합니다. Cursor에서 local plugin imports를 허용하고 **Developer: Reload Window**로 활성화하세요. Hermes 설치는 `${HERMES_HOME:-~/.hermes}/plugins/jev-router`에 복사하고 기존 Hermes 설정을 보존하면서 plugin을 활성화합니다. `claude --plugin-dir "$PWD"`는 Claude plugin만 설치 없이 시험할 때 사용합니다.
 
 ## 플랫폼별 설정
 
 - `config/omp.json`: OMP의 작업별 light/deep role 후보, `tierRolesByMode`의 5단계 우선 alias, `fallbackRolesByMode`, thinking level을 설정합니다. 입력값은 OMP `modelRoles`에 정의한 alias 이름이며 provider/model ID를 직접 지정하지 않습니다. 설치 후 활성 `<agent-dir>/config/omp.json`에 저장되며, guided setup은 `./scripts/install.sh [profile] --configure`로 실행합니다.
 - `config/claude.json`: hook의 `enabled`와 `maxPromptChars`, 설치 때 사용할 5단계 모델 기본값(`modelsByMode`)을 설정합니다. 기본 모델은 모두 `inherit`이며, 설치 후 개인 설정은 `${CLAUDE_CONFIG_DIR:-~/.claude}/jev-route.models.json`에 저장됩니다. 최대 prompt 길이는 공통 안전 한도보다 커질 수 없습니다.
 - `config/codex.json`: Codex hook의 `enabled`·`maxPromptChars`와 단계별 모델 기본값(`modelsByMode`)을 설정합니다. 기본값 `inherit`는 부모 세션 모델을 유지합니다. 설치 후 개인 선택은 `${CODEX_HOME:-~/.codex}/jev-route.models.json`에 보존됩니다.
+- `config/hermes.json`: Hermes hook의 `enabled`와 Jev에 보낼 최대 요청 길이(`maxPromptChars`)를 설정합니다. 설치된 plugin의 `config/hermes.json`에 처음 복사하며 재설치 시 개인 설정을 보존합니다.
 
 ## Claude Code (advisory)
 
@@ -126,6 +128,14 @@ Cursor의 `beforeSubmitPrompt` hook은 프롬프트 차단 여부만 받을 수 
 Cursor subagent 모델은 기본 `inherit`입니다. 특정 Cursor model ID가 필요하면 설치한 plugin의 `agents/jev-*.md`에서 `model` 값을 계정에서 사용 가능한 ID로 변경하세요. 모델 지정은 부모 세션의 model을 바꾸거나 가용성·조직 정책을 우회하지 않습니다. 분류와 subagent 제안은 advisory이며 보안 경계가 아닙니다.
 
 Cursor plugin은 Node.js 18+를 대상으로 하며, [Cursor Hooks](https://cursor.com/docs/hooks.md), [Plugins](https://cursor.com/docs/plugins.md), [Subagents](https://cursor.com/docs/subagents.md), [MCP](https://cursor.com/docs/mcp.md)에서 현재 IDE의 동작을 확인하세요.
+
+## Hermes Agent (advisory)
+
+`make install PLATFORM=hermes`는 Hermes native plugin을 설치하고 `hermes plugins enable jev-router --no-allow-tool-override`로 활성화합니다. Hermes CLI와 gateway의 `pre_llm_call` hook이 각 부모 턴의 사용자 요청을 Jev에 분류해 `ALM role/work type/TRIVIAL~CRITICAL`을 모델의 현재 턴 context로 전달합니다. `@jev:fast` 등 명시적 단계는 API key 없이 동작합니다. 자동 분류에는 Hermes 프로세스의 `TYPESAFE_API_KEY` 환경변수가 필요합니다. 키가 없거나 요청에 코드 블록·시크릿 형태가 있거나 길이 제한을 넘으면 전송·주입하지 않습니다. 오류·타임아웃은 기존 Hermes 동작을 유지합니다.
+
+Hermes `delegate_task`는 **작업별 모델을 받지 않습니다.** `~/.hermes/config.yaml`의 `delegation.model`은 모든 자식 agent에 적용되고, 지정하지 않으면 부모 모델을 상속합니다. Jev의 단계 제안은 작업 깊이와 위임 판단의 참고 정보일 뿐 모델을 자동 변경하거나 위임을 강제하지 않으며 보안 경계가 아닙니다. 세션 모델은 `hermes model` 또는 실행 시 `hermes -m <model>`로 선택할 수 있습니다. 설치된 plugin 코드는 재설치 시 관리 파일만 덮어쓰며, 기존 비관리 `jev-router` 디렉터리는 거부합니다. [Hermes plugin hooks](https://hermes-agent.nousresearch.com/docs/user-guide/features/hooks) · [Delegation](https://hermes-agent.nousresearch.com/docs/user-guide/features/delegation)
+
+## TypeSafe API key
 
 API key는 Git·환경 파일에 저장하지 않습니다. launcher는 **`TYPESAFE_API_KEY` 환경변수 우선**,
 없으면 macOS login Keychain의 `omp-typesafe` 항목을 읽습니다.

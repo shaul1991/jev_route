@@ -2,7 +2,7 @@ PLATFORM ?= omp
 PROFILE ?=
 CONFIGURE ?= 0
 
-.PHONY: install install-omp install-claude install-codex install-cursor
+.PHONY: install install-omp install-claude install-codex install-cursor install-hermes
 
 ifeq ($(PLATFORM),omp)
 install: install-omp
@@ -12,9 +12,11 @@ else ifeq ($(PLATFORM),codex)
 install: install-codex
 else ifeq ($(PLATFORM),cursor)
 install: install-cursor
+else ifeq ($(PLATFORM),hermes)
+install: install-hermes
 else
 install:
-	@echo "Unsupported PLATFORM '$(PLATFORM)'; choose omp, claude, codex, or cursor" >&2
+	@echo "Unsupported PLATFORM '$(PLATFORM)'; choose omp, claude, codex, cursor, or hermes" >&2
 	@exit 2
 endif
 
@@ -33,3 +35,7 @@ install-codex:
 
 install-cursor:
 	node scripts/install-cursor.mjs
+
+install-hermes:
+	node scripts/install-hermes.mjs
+	hermes plugins enable jev-router --no-allow-tool-override
