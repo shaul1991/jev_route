@@ -1,0 +1,6 @@
+{
+  "name": "jev-router",
+  "description": "Advisory Jev classification and Codex tier subagent recommendations.",
+  "version": "0.1.0",
+  "hooks": "./hooks/codex-hooks.json"
+}

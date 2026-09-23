@@ -1,6 +1,6 @@
 # jev_route
 
-Oh My Pi(OMP)의 Jev router extension과 Claude Code 플러그인, macOS 설치 도구입니다.
+Oh My Pi(OMP) 확장, Claude Code·Codex advisory 플러그인, macOS 설치 도구입니다.
 
 ## 제공 기능
 
@@ -71,14 +71,17 @@ make install                         # 기본값: OMP
 make install PLATFORM=claude         # Claude plugin + 사용자 범위 tier subagent 설치
 make install PROFILE=omp-media CONFIGURE=1
 make install-claude CONFIGURE=1       # TRIVIAL~CRITICAL 모델을 대화형으로 지정
+make install PLATFORM=codex          # Codex plugin + 사용자 범위 tier subagent 설치
+make install-codex CONFIGURE=1        # Codex 5단계 모델을 대화형으로 지정
 ```
 
-`make install omp claude` 형식은 Make의 플랫폼 선택 문법이 아니므로 `PLATFORM=omp` 또는 `PLATFORM=claude`를 사용하세요. Claude 대상은 현재 checkout을 사용자 범위 local marketplace로 등록하고 `jev-router` plugin 및 `~/.claude/agents/jev-{trivial,fast,normal,deep,critical}.md`를 설치합니다. `claude --plugin-dir "$PWD"`는 plugin만 현재 디렉터리에서 시험할 때 사용합니다.
+`make install omp claude codex` 형식은 Make의 플랫폼 선택 문법이 아니므로 `PLATFORM=omp`, `PLATFORM=claude`, `PLATFORM=codex` 중 하나를 사용하세요. Claude와 Codex 설치는 현재 checkout을 사용자 범위 local marketplace로 등록하고 `jev-router` plugin과 각 플랫폼의 사용자 subagent 5개를 설치합니다. `claude --plugin-dir "$PWD"`는 Claude plugin만 설치 없이 시험할 때 사용합니다.
 
 ## 플랫폼별 설정
 
 - `config/omp.json`: OMP의 작업별 light/deep role 후보, `tierRolesByMode`의 5단계 우선 alias, `fallbackRolesByMode`, thinking level을 설정합니다. 입력값은 OMP `modelRoles`에 정의한 alias 이름이며 provider/model ID를 직접 지정하지 않습니다. 설치 후 활성 `<agent-dir>/config/omp.json`에 저장되며, guided setup은 `./scripts/install.sh [profile] --configure`로 실행합니다.
 - `config/claude.json`: hook의 `enabled`와 `maxPromptChars`, 설치 때 사용할 5단계 모델 기본값(`modelsByMode`)을 설정합니다. 기본 모델은 모두 `inherit`이며, 설치 후 개인 설정은 `${CLAUDE_CONFIG_DIR:-~/.claude}/jev-route.models.json`에 저장됩니다. 최대 prompt 길이는 공통 안전 한도보다 커질 수 없습니다.
+- `config/codex.json`: Codex hook의 `enabled`·`maxPromptChars`와 단계별 모델 기본값(`modelsByMode`)을 설정합니다. 기본값 `inherit`는 부모 세션 모델을 유지합니다. 설치 후 개인 선택은 `${CODEX_HOME:-~/.codex}/jev-route.models.json`에 보존됩니다.
 
 ## Claude Code (advisory)
 
@@ -104,6 +107,14 @@ printf '\n'
 export TYPESAFE_API_KEY
 claude --plugin-dir "$PWD"
 ```
+
+## Codex (advisory)
+
+`make install-codex`는 `${CODEX_HOME:-~/.codex}/agents/jev_{trivial,fast,normal,deep,critical}.toml`과 Codex plugin을 설치합니다. `CONFIGURE=1`로 단계별 사용 가능한 Codex 모델 ID를 입력할 수 있습니다. 입력하지 않으면 `inherit`가 기본이며, 이미 선택한 모델은 재설치 시 유지됩니다. 관리 대상이 아닌 기존 agent 파일은 덮어쓰지 않습니다.
+
+Codex의 `UserPromptSubmit` hook은 Jev가 분류한 ALM role/work type/mode에 따라 해당 `jev_<mode>` subagent를 권장합니다. 메인 Codex가 위임한 경우에만 그 agent에 설정한 모델로 작업합니다. **hook은 메인 세션 모델을 전환하거나 위임을 강제하지 않습니다.** 분류 제안은 보안 경계가 아니며 OMP의 승인 routing policy도 적용하지 않습니다. `@jev:fast` 등 명시적 단계는 API key가 없어도 제안하지만, 자동 분류에는 `TYPESAFE_API_KEY`가 필요합니다. 시크릿 형태·코드 블록·길이 제한 초과 요청은 Jev로 보내지 않습니다.
+
+**Codex에서는 plugin 설치만으로 hook을 신뢰하지 않습니다.** Codex를 시작하고 `/hooks`에서 `jev-router`의 `UserPromptSubmit` hook 내용을 검토한 다음 신뢰해야 실제 자동 분류가 실행됩니다. 설치한 플러그인을 무조건 신뢰하게 하는 우회 플래그는 사용하지 마세요. 모델 가용성 및 조직 제한은 Codex가 결정하며, 사용할 수 없는 모델을 설치 도구가 임의 모델로 대체하지 않습니다.
 
 ## TypeSafe API key
 
