@@ -22,6 +22,9 @@ const CLAUDE_CONFIG = loadClaudeConfig(claudeConfigJson)
 const API_KEY = process.env.TYPESAFE_API_KEY
 const MAX_REQUEST_CHARS = CLAUDE_CONFIG.maxPromptChars
 const SECRET_PATTERN = /-----BEGIN [A-Z ]*PRIVATE KEY-----|(?:api[_-]?key|access[_-]?token|secret|password)\s*[:=]|authorization:\s*bearer\s+/i
+function delegationAdvice(mode) {
+  return `Recommended Claude subagent: jev-${mode.toLowerCase()} (Agent tool subagent_type). If delegation fits the task, send it the actual request; otherwise handle it in the current session. The subagent has its own configured model, but the parent session model is not switched. This is advisory, not a security boundary.`
+}
 
 function outputContext(context) {
   process.stdout.write(`${JSON.stringify({
@@ -42,7 +45,7 @@ async function main() {
   const override = /^\s*@jev:(trivial|fast|normal|deep|critical)\b/i.exec(prompt)
   if (override) {
     const mode = override[1].toUpperCase()
-    outputContext(`Jev advisory route: general/general/${mode} (explicit override). This is a recommendation only; Claude Code's model is not switched by this hook.`)
+    outputContext(`Jev advisory route: general/general/${mode} (explicit override). ${delegationAdvice(mode)}`)
     return
   }
   if (!API_KEY) return
@@ -77,7 +80,7 @@ async function main() {
     const work = workTypes.includes(workAnswer?.choice) && typeof workAnswer.confidence === "number" && workAnswer.confidence >= ROUTING_THRESHOLDS.workConfidence
       ? workAnswer.choice
       : "general"
-    outputContext(`Jev advisory route: ${role}/${work}/${mode}. This is a recommendation only; Claude Code's model is not switched by this hook. Continue using the configured Claude model unless the user explicitly changes it.`)
+    outputContext(`Jev advisory route: ${role}/${work}/${mode}. ${delegationAdvice(mode)}`)
   } finally {
     clearTimeout(timer)
   }

@@ -68,16 +68,17 @@ Makefile을 통한 플랫폼 설치:
 
 ```bash
 make install                         # 기본값: OMP
-make install PLATFORM=claude         # Claude 사용자 plugin으로 설치
+make install PLATFORM=claude         # Claude plugin + 사용자 범위 tier subagent 설치
 make install PROFILE=omp-media CONFIGURE=1
+make install-claude CONFIGURE=1       # TRIVIAL~CRITICAL 모델을 대화형으로 지정
 ```
 
-`make install omp claude` 형식은 Make의 플랫폼 선택 문법이 아니므로 `PLATFORM=omp` 또는 `PLATFORM=claude`를 사용하세요. Claude 대상은 현재 checkout을 사용자 범위 local marketplace로 등록하고 `jev-router` plugin을 설치합니다. `claude --plugin-dir "$PWD"`는 설치 없이 현재 디렉터리에서 시험할 때 사용합니다.
+`make install omp claude` 형식은 Make의 플랫폼 선택 문법이 아니므로 `PLATFORM=omp` 또는 `PLATFORM=claude`를 사용하세요. Claude 대상은 현재 checkout을 사용자 범위 local marketplace로 등록하고 `jev-router` plugin 및 `~/.claude/agents/jev-{trivial,fast,normal,deep,critical}.md`를 설치합니다. `claude --plugin-dir "$PWD"`는 plugin만 현재 디렉터리에서 시험할 때 사용합니다.
 
 ## 플랫폼별 설정
 
 - `config/omp.json`: OMP의 작업별 light/deep role 후보, `tierRolesByMode`의 5단계 우선 alias, `fallbackRolesByMode`, thinking level을 설정합니다. 입력값은 OMP `modelRoles`에 정의한 alias 이름이며 provider/model ID를 직접 지정하지 않습니다. 설치 후 활성 `<agent-dir>/config/omp.json`에 저장되며, guided setup은 `./scripts/install.sh [profile] --configure`로 실행합니다.
-- `config/claude.json`: Claude hook의 `enabled`와 `maxPromptChars`를 설정합니다. 최대 prompt 길이는 공통 안전 한도보다 커질 수 없습니다. 이 설정은 분류 advisory를 조절할 뿐 Claude의 모델이나 agent를 선택하지 않습니다.
+- `config/claude.json`: hook의 `enabled`와 `maxPromptChars`, 설치 때 사용할 5단계 모델 기본값(`modelsByMode`)을 설정합니다. 기본 모델은 모두 `inherit`이며, 설치 후 개인 설정은 `${CLAUDE_CONFIG_DIR:-~/.claude}/jev-route.models.json`에 저장됩니다. 최대 prompt 길이는 공통 안전 한도보다 커질 수 없습니다.
 
 ## Claude Code (advisory)
 
@@ -89,7 +90,9 @@ claude --plugin-dir "$PWD"
 
 `TYPESAFE_API_KEY` 환경변수가 설정되어 있어야 합니다. Claude Code의 `UserPromptSubmit` hook이 사용자 요청을 Jev에 분류 요청으로 보내고, 결과를 `additionalContext`로 전달합니다. 코드 블록, 2,000자를 초과하는 요청, API key·secret·password·private key 형태가 감지된 요청은 전송하지 않습니다. 키가 없거나 Jev 호출이 실패하면 hook은 아무 context도 추가하지 않고 원래 Claude 동작을 유지합니다.
 
-이 adapter는 **advisory only**입니다. Claude Code의 현재 세션 모델을 hook에서 자동 변경하지 않습니다. 기존 모델을 유지하며 Jev의 role/work/mode 분류를 참고 정보로 제공합니다. OMP adapter처럼 실제 모델 배정을 제어하지 않습니다. 현재 OMP에 저장한 승인 routing policy도 Claude adapter에는 적용되지 않습니다.
+이 adapter는 **advisory only**입니다. Claude Code의 현재 세션 모델을 hook에서 자동 변경하지 않습니다. Jev의 role/work/mode 분류를 `additionalContext`로 제공하면서 해당 `jev-<mode>` subagent 사용을 권장합니다. 메인 Claude가 위임을 선택한 경우에만 subagent의 `model`로 해당 작업을 실행하고 결과를 메인 세션에 반환합니다. 메인 모델은 유지되며, 위임이나 5단계 모델 배정은 강제되지 않습니다. 현재 OMP에 저장한 승인 routing policy도 Claude adapter에는 적용되지 않습니다.
+
+`make install-claude CONFIGURE=1`에서 각 단계에 Claude 모델 alias(`haiku`, `sonnet`, `opus`, `inherit` 등) 또는 사용 가능한 모델 ID를 입력하세요. 비워 두면 현재 값을 유지합니다. `CONFIGURE=1` 없이 재설치하면 개인 모델 선택을 보존합니다. 설치 도구는 `jev-<mode>` 이름의 기존 사용자 agent 파일이 자신의 관리 파일이 아니면 덮어쓰지 않습니다. 모델을 바꿔도 Claude의 조직 허용 모델 정책이나 계정 가용성을 우회할 수 없습니다. 사용 불가 모델은 Claude가 자체 fallback을 적용할 수 있습니다.
 
 Claude plugin은 `UserPromptSubmit` hook을 사용하므로 Node.js 18 이상이 필요합니다. 프로젝트가 plugin hook 실행을 허용하는지 확인한 뒤 사용하세요.
 

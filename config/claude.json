@@ -1,5 +1,12 @@
 {
   "version": 1,
   "enabled": true,
-  "maxPromptChars": 2000
+  "maxPromptChars": 2000,
+  "modelsByMode": {
+    "TRIVIAL": "inherit",
+    "FAST": "inherit",
+    "NORMAL": "inherit",
+    "DEEP": "inherit",
+    "CRITICAL": "inherit"
+  }
 }

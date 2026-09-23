@@ -18,5 +18,6 @@ install-omp:
 	./scripts/install.sh $(if $(strip $(PROFILE)),"$(PROFILE)") $(if $(filter 1,$(CONFIGURE)),--configure)
 
 install-claude:
+	node scripts/configure-claude.mjs $(if $(filter 1,$(CONFIGURE)),--configure)
 	claude plugin marketplace add "$(CURDIR)" --scope user
 	claude plugin install jev-router@jev-route --scope user -y
