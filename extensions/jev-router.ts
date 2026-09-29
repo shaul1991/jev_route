@@ -1,6 +1,7 @@
 import { mkdir, open, readFile, writeFile } from "node:fs/promises"
 import { requestJev } from "../shared/jev-api.mjs"
 import { ALM_ROLE_CRITERIA, buildRoutingQuestions, ROUTING_THRESHOLDS } from "../shared/jev-routing.mjs"
+import { projectToolAdvice } from "../shared/jev-project-config.mjs"
 import ompConfigJson from "../config/omp.json" with { type: "json" }
 
 const ROUTER_MODE_ENV = "JEV_ROUTER_MODE"
@@ -57,6 +58,7 @@ type AlmRole =
 
 type WorkType =
   | "implementation"
+  | "design"
   | "documentation"
   | "planning"
   | "verification"
@@ -189,6 +191,7 @@ type ModelQuery = {
 }
 
 type ExtensionContext = {
+  cwd?: string
   model: unknown
   models?: ModelQuery
   ui: {
@@ -199,7 +202,7 @@ type ExtensionContext = {
 
 type ExtensionAPI = {
   getThinkingLevel: () => ThinkingLevel
-  on: (event: string, handler: (event: unknown, ctx: ExtensionContext) => void | Promise<void>) => void
+  on: (event: string, handler: (event: unknown, ctx: ExtensionContext) => void | { message: { customType: string; content: string; display: boolean } } | Promise<void | { message: { customType: string; content: string; display: boolean } }>) => void
   registerCommand: (name: string, command: {
     description: string
     handler: (args: string, ctx: ExtensionContext) => void | Promise<void>
@@ -211,7 +214,7 @@ type ExtensionAPI = {
 const MODE_NAMES: Mode[] = ["TRIVIAL", "FAST", "NORMAL", "DEEP", "CRITICAL"]
 const ALM_ROLE_NAMES = Object.keys(ALM_ROLE_CRITERIA) as AlmRole[]
 const WORK_TYPE_NAMES: WorkType[] = [
-  "implementation", "documentation", "planning", "verification",
+  "implementation", "design", "documentation", "planning", "verification",
   "review", "investigation", "delivery", "general",
 ]
 
@@ -629,6 +632,7 @@ function asAlmRole(value: unknown): AlmRole | undefined {
 
 function asWorkType(value: unknown): WorkType | undefined {
   return value === "implementation"
+    || value === "design"
     || value === "documentation"
     || value === "planning"
     || value === "verification"
@@ -1556,6 +1560,10 @@ export default function (pi: ExtensionAPI): void {
       compactions: 0,
     }
     void logDecision(decision, routerMode, applied, trace, route)
+    const toolAdvice = await projectToolAdvice(decision.workType, ctx.cwd)
+    if (toolAdvice) {
+      return { message: { customType: "jev-project-tools", content: toolAdvice, display: false } }
+    }
   })
 
   pi.on("tool_call", event => {

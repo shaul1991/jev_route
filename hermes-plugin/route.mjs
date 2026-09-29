@@ -7,12 +7,14 @@ const settingsPath = bundled ? "./config/hermes.json" : "../config/hermes.json"
 const { requestJev } = await import(new URL(`${shared}jev-api.mjs`, import.meta.url))
 const { ALM_ROLE_CRITERIA, buildRoutingQuestions, ROUTING_THRESHOLDS } = await import(new URL(`${shared}jev-routing.mjs`, import.meta.url))
 const settings = JSON.parse(readFileSync(new URL(settingsPath, import.meta.url), "utf8"))
+const { projectToolAdvice } = await import(new URL(`${shared}jev-project-config.mjs`, import.meta.url))
 const MODES = ["TRIVIAL", "FAST", "NORMAL", "DEEP", "CRITICAL"]
-const WORK_TYPES = ["implementation", "documentation", "planning", "verification", "review", "investigation", "delivery", "general"]
+const WORK_TYPES = ["implementation", "design", "documentation", "planning", "verification", "review", "investigation", "delivery", "general"]
 const SECRET_PATTERN = /-----BEGIN [A-Z ]*PRIVATE KEY-----|(?:api[_-]?key|access[_-]?token|secret|password)\s*[:=]|authorization:\s*bearer\s+/i
 
-function classified(role, work, mode) {
-  return { status: "classified", role, work, mode }
+async function classified(role, work, mode, cwd) {
+  const toolAdvice = await projectToolAdvice(work, cwd)
+  return { status: "classified", role, work, mode, toolAdvice }
 }
 
 async function route() {
@@ -20,10 +22,12 @@ async function route() {
   if (!settings.enabled) return
   let raw = ""
   for await (const chunk of process.stdin) raw += chunk
-  const prompt = JSON.parse(raw)?.prompt
+  const input = JSON.parse(raw)
+  const prompt = input?.prompt
+  const cwd = typeof input?.cwd === "string" ? input.cwd : process.cwd()
   if (typeof prompt !== "string" || !prompt.trim() || prompt.length > Math.min(settings.maxPromptChars, ROUTING_THRESHOLDS.maxRequestChars) || /```/.test(prompt) || SECRET_PATTERN.test(prompt)) return
   const override = /^\s*@jev:(trivial|fast|normal|deep|critical)\b/i.exec(prompt)
-  if (override) return classified("general", "general", override[1].toUpperCase())
+  if (override) return classified("general", "general", override[1].toUpperCase(), cwd)
   if (!process.env.TYPESAFE_API_KEY) return
 
   const controller = new AbortController()
@@ -43,7 +47,7 @@ async function route() {
     const role = ALM_ROLE_CRITERIA[roleAnswer?.choice] && typeof roleAnswer.confidence === "number" && roleAnswer.confidence >= ROUTING_THRESHOLDS.roleConfidence ? roleAnswer.choice : "general"
     const workAnswer = answers?.work_type
     const work = WORK_TYPES.includes(workAnswer?.choice) && typeof workAnswer.confidence === "number" && workAnswer.confidence >= ROUTING_THRESHOLDS.workConfidence ? workAnswer.choice : "general"
-    return classified(role, work, mode)
+    return classified(role, work, mode, cwd)
   } finally {
     clearTimeout(timer)
   }

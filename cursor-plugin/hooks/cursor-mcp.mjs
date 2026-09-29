@@ -6,12 +6,14 @@ const sharedPath = existsSync(new URL("../shared/jev-api.mjs", import.meta.url))
 const { requestJev } = await import(new URL(`${sharedPath}jev-api.mjs`, import.meta.url))
 const { ALM_ROLE_CRITERIA, buildRoutingQuestions, ROUTING_THRESHOLDS } = await import(new URL(`${sharedPath}jev-routing.mjs`, import.meta.url))
 
+const { projectToolAdvice } = await import(new URL(`${sharedPath}jev-project-config.mjs`, import.meta.url))
 const SECRET_PATTERN = /-----BEGIN [A-Z ]*PRIVATE KEY-----|(?:api[_-]?key|access[_-]?token|secret|password)\s*[:=]|authorization:\s*bearer\s+/i
 const MODES = ["TRIVIAL", "FAST", "NORMAL", "DEEP", "CRITICAL"]
-const WORK_TYPES = ["implementation", "documentation", "planning", "verification", "review", "investigation", "delivery", "general"]
+const WORK_TYPES = ["implementation", "design", "documentation", "planning", "verification", "review", "investigation", "delivery", "general"]
 
-function routeAdvice(role, work, mode, source = "Jev") {
+async function routeAdvice(role, work, mode, source = "Jev", cwd = process.cwd()) {
   const agent = `jev-${mode.toLowerCase()}`
+  const toolAdvice = await projectToolAdvice(work, cwd)
   return {
     status: "classified",
     source,
@@ -19,17 +21,17 @@ function routeAdvice(role, work, mode, source = "Jev") {
     work,
     mode,
     recommendedAgent: agent,
-    advisory: `Recommended Cursor subagent: ${agent}. Delegate the actual task only when it benefits from delegation; otherwise work in the parent session. This does not switch the parent model or force delegation.`,
+    advisory: `Recommended Cursor subagent: ${agent}. Delegate the actual task only when it benefits from delegation; otherwise work in the parent session. This does not switch the parent model or force delegation.${toolAdvice ? ` ${toolAdvice}` : ""}`,
   }
 }
 
-async function classify(prompt) {
+async function classify(prompt, cwd) {
   if (typeof prompt !== "string" || !prompt.trim()) return { status: "skipped", reason: "empty prompt" }
   if (prompt.length > ROUTING_THRESHOLDS.maxRequestChars) return { status: "skipped", reason: "prompt exceeds the shared size limit" }
   if (/```/.test(prompt)) return { status: "skipped", reason: "code block detected" }
   if (SECRET_PATTERN.test(prompt)) return { status: "skipped", reason: "secret-like content detected" }
   const override = /^\s*@jev:(trivial|fast|normal|deep|critical)\b/i.exec(prompt)
-  if (override) return routeAdvice("general", "general", override[1].toUpperCase(), "explicit override")
+  if (override) return routeAdvice("general", "general", override[1].toUpperCase(), "explicit override", cwd)
   const apiKey = process.env.TYPESAFE_API_KEY
   if (!apiKey) return { status: "unavailable", reason: "TYPESAFE_API_KEY is not set" }
 
@@ -59,7 +61,7 @@ async function classify(prompt) {
     const work = WORK_TYPES.includes(workAnswer?.choice) && typeof workAnswer.confidence === "number" && workAnswer.confidence >= ROUTING_THRESHOLDS.workConfidence
       ? workAnswer.choice
       : "general"
-    return routeAdvice(role, work, mode)
+    return routeAdvice(role, work, mode, "Jev", cwd)
   } catch {
     return { status: "unavailable", reason: "Jev request failed or timed out" }
   } finally {
@@ -95,7 +97,10 @@ for await (const line of input) {
         description: "Classify the user's current request into ALM role, work type, and one of five advisory task modes.",
         inputSchema: {
           type: "object",
-          properties: { prompt: { type: "string", description: "The user's current request to classify." } },
+          properties: {
+            prompt: { type: "string", description: "The user's current request to classify." },
+            cwd: { type: "string", description: "Optional absolute project root used to load its .jev.config.json." },
+          },
           required: ["prompt"],
           additionalProperties: false,
         },
@@ -106,7 +111,7 @@ for await (const line of input) {
       respond(message.id, undefined, { code: -32602, message: "Unknown tool" })
       continue
     }
-    const result = await classify(message.params.arguments?.prompt)
+    const result = await classify(message.params.arguments?.prompt, message.params.arguments?.cwd)
     respond(message.id, {
       content: [{ type: "text", text: JSON.stringify(result) }],
       structuredContent: result,

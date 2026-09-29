@@ -1,0 +1,15 @@
+{
+  "version": 1,
+  "tasks": {
+    "design": {
+      "tools": ["opendesign"],
+      "toolOptions": {
+        "opendesign": {
+          "model": "claude-opus-5-5",
+          "reasoningEffort": "high"
+        }
+      },
+      "fallback": "normal"
+    }
+  }
+}

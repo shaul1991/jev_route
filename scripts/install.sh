@@ -50,6 +50,8 @@ install -m 600 "$repo_dir/shared/jev-api.mjs" "$agent_dir/shared/jev-api.mjs"
 install -m 600 "$repo_dir/shared/jev-api.d.mts" "$agent_dir/shared/jev-api.d.mts"
 install -m 600 "$repo_dir/shared/jev-routing.mjs" "$agent_dir/shared/jev-routing.mjs"
 install -m 600 "$repo_dir/shared/jev-routing.d.mts" "$agent_dir/shared/jev-routing.d.mts"
+install -m 600 "$repo_dir/shared/jev-project-config.mjs" "$agent_dir/shared/jev-project-config.mjs"
+install -m 600 "$repo_dir/shared/jev-project-config.d.mts" "$agent_dir/shared/jev-project-config.d.mts"
 install -m 700 "$repo_dir/bin/omp-jev" "${HOME}/.local/bin/omp-jev"
 
 printf '%s\n' "Installed Jev router in $agent_dir/extensions/jev-router.ts"

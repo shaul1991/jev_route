@@ -2,6 +2,7 @@
 import { readFileSync } from "node:fs"
 import { requestJev } from "../shared/jev-api.mjs"
 import { ALM_ROLE_CRITERIA, buildRoutingQuestions, ROUTING_THRESHOLDS } from "../shared/jev-routing.mjs"
+import { projectToolAdvice } from "../shared/jev-project-config.mjs"
 
 const config = JSON.parse(readFileSync(new URL("../config/codex.json", import.meta.url), "utf8"))
 if (config.version !== 1 || typeof config.enabled !== "boolean" || !Number.isInteger(config.maxPromptChars) || config.maxPromptChars < 1) {
@@ -11,9 +12,10 @@ const maxChars = Math.min(config.maxPromptChars, ROUTING_THRESHOLDS.maxRequestCh
 const secretPattern = /-----BEGIN [A-Z ]*PRIVATE KEY-----|(?:api[_-]?key|access[_-]?token|secret|password)\s*[:=]|authorization:\s*bearer\s+/i
 const modes = ["TRIVIAL", "FAST", "NORMAL", "DEEP", "CRITICAL"]
 
-function outputAdvice(role, work, mode) {
+async function outputAdvice(role, work, mode, cwd) {
   const agent = `jev_${mode.toLowerCase()}`
-  const context = `Jev advisory route: ${role}/${work}/${mode}. Recommended Codex custom subagent: ${agent}. If the task benefits from delegation, spawn this agent with the user's actual task; otherwise work in the parent session. The subagent has its own configured model. This hook does not switch the parent model or force delegation, and is not a security boundary.`
+  const toolAdvice = await projectToolAdvice(work, cwd)
+  const context = `Jev advisory route: ${role}/${work}/${mode}. Recommended Codex custom subagent: ${agent}. If the task benefits from delegation, spawn this agent with the user's actual task; otherwise work in the parent session. The subagent has its own configured model. This hook does not switch the parent model or force delegation, and is not a security boundary.${toolAdvice ? ` ${toolAdvice}` : ""}`
   process.stdout.write(`${JSON.stringify({ hookSpecificOutput: { hookEventName: "UserPromptSubmit", additionalContext: context } })}\n`)
 }
 
@@ -24,9 +26,10 @@ async function main() {
   const input = JSON.parse(raw)
   const prompt = typeof input.prompt === "string" ? input.prompt : ""
   if (!prompt.trim() || prompt.length > maxChars || /```/.test(prompt) || secretPattern.test(prompt)) return
+  const cwd = typeof input.cwd === "string" ? input.cwd : process.cwd()
   const override = /^\s*@jev:(trivial|fast|normal|deep|critical)\b/i.exec(prompt)
   if (override) {
-    outputAdvice("general", "general", override[1].toUpperCase())
+    await outputAdvice("general", "general", override[1].toUpperCase(), cwd)
     return
   }
   if (!process.env.TYPESAFE_API_KEY) return
@@ -53,12 +56,12 @@ async function main() {
     const role = ALM_ROLE_CRITERIA[roleAnswer?.choice] && typeof roleAnswer.confidence === "number" && roleAnswer.confidence >= ROUTING_THRESHOLDS.roleConfidence
       ? roleAnswer.choice
       : "general"
-    const workTypes = ["implementation", "documentation", "planning", "verification", "review", "investigation", "delivery", "general"]
+    const workTypes = ["implementation", "design", "documentation", "planning", "verification", "review", "investigation", "delivery", "general"]
     const workAnswer = answers?.work_type
     const work = workTypes.includes(workAnswer?.choice) && typeof workAnswer.confidence === "number" && workAnswer.confidence >= ROUTING_THRESHOLDS.workConfidence
       ? workAnswer.choice
       : "general"
-    outputAdvice(role, work, mode)
+    await outputAdvice(role, work, mode, cwd)
   } finally {
     clearTimeout(timer)
   }

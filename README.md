@@ -7,6 +7,7 @@ OMP 확장, Claude Code·Codex·Cursor·Hermes advisory 플러그인, macOS 설�
 - 사용자 요청을 Jev의 `ALM role` / `work type` / 5단계 작업 깊이로 분류합니다. OMP에서는 결과를 역할 alias와 thinking level로 연결.
 - routing decision, 적용 모델, audit 결과를 프로필별 JSONL로 기록.
 - `/jev roles`, `/jev roles routes`, `/jev log [n]`으로 역할 경로와 기록을 확인.
+- 프로젝트의 `.jev.config.json`으로 작업별 도구·MCP 사용 선호를 전달합니다. 시각적 디자인 작업은 `design`으로 분류하며, 도구가 없으면 일반 작업으로 진행합니다.
 - **observe-only Tool Risk Gate**: 위험 신호가 있는 `bash` 호출을 분류하지만 실행을 차단·수정·지연하지 않음.
 
 Tool Risk Gate는 원문 command, 경로, 파일 내용, 인자값을 Jev에 전송하거나 로그에 남기지 않습니다. 로컬에서 만든 위험 신호와 명령 길이만 전송합니다. 시크릿 가능성이 있으면 Jev API 호출 없이 로컬 기록만 남깁니다.
@@ -85,6 +86,51 @@ make install PLATFORM=hermes         # Hermes plugin 설치·활성화
 - `config/claude.json`: hook의 `enabled`와 `maxPromptChars`, 설치 때 사용할 5단계 모델 기본값(`modelsByMode`)을 설정합니다. 기본 모델은 모두 `inherit`이며, 설치 후 개인 설정은 `${CLAUDE_CONFIG_DIR:-~/.claude}/jev-route.models.json`에 저장됩니다. 최대 prompt 길이는 공통 안전 한도보다 커질 수 없습니다.
 - `config/codex.json`: Codex hook의 `enabled`·`maxPromptChars`와 단계별 모델 기본값(`modelsByMode`)을 설정합니다. 기본값 `inherit`는 부모 세션 모델을 유지합니다. 설치 후 개인 선택은 `${CODEX_HOME:-~/.codex}/jev-route.models.json`에 보존됩니다.
 - `config/hermes.json`: Hermes hook의 `enabled`와 Jev에 보낼 최대 요청 길이(`maxPromptChars`)를 설정합니다. 설치된 plugin의 `config/hermes.json`에 처음 복사하며 재설치 시 개인 설정을 보존합니다.
+
+## 프로젝트별 도구 설정: `.jev.config.json`
+
+작업을 실행할 프로젝트 디렉터리에 다음 파일을 둡니다. 이 저장소는 디자인 작업에 `opendesign`을 우선 제안하고 고정 모델 ID `claude-opus-5-5`와 `high` 추론 강도를 요청합니다.
+
+```json
+{
+  "version": 1,
+  "tasks": {
+    "design": {
+      "tools": ["opendesign"],
+      "toolOptions": {
+        "opendesign": {
+          "model": "claude-opus-5-5",
+          "reasoningEffort": "high"
+        }
+      },
+      "fallback": "normal"
+    }
+  }
+}
+```
+`tasks`의 키는 `implementation`, `design`, `documentation`, `planning`, `verification`, `review`, `investigation`, `delivery`, `general`입니다. Jev의 work type 결과와 **정확히 일치하는 항목만** 적용합니다. 예를 들어 `verification`에 `"tools": ["playwright"]`를 추가할 수 있습니다. `design`은 시각적 UI/UX·레이아웃·디자인 산출물 제작/수정이며, 시스템 아키텍처나 데이터베이스 설계 자체를 뜻하지 않습니다.
+
+- `tools`: 호스트에 연결된 도구 또는 MCP의 식별자 목록. 나열한 순서대로 작업에 적합하고 사용 가능한 도구를 우선 제안합니다. 1~16개이며 각 이름은 영문자로 시작하고 영문자·숫자·`_`·`.`·`:`·`-`만 포함하는 최대 128자 문자열입니다.
+- `toolOptions`: 목록에 선언한 도구별 실행 선호입니다. `model`은 최대 128자의 모델 ID이고, `reasoningEffort`는 `minimal`, `low`, `medium`, `high`, `xhigh`, `max` 중 하나입니다. 이 저장소는 `opendesign`에 Anthropic API용 Claude Opus 5.5 고정 모델 ID `claude-opus-5-5`와 `high`를 요청합니다. OpenDesign의 Claude 어댑터는 모델 ID를 Claude Code에 전달하며, provider/account 접근 권한에 따라 요청이 거부될 수 있습니다.
+- `fallback`: 생략하거나 `"normal"`만 지정할 수 있습니다. 도구가 없거나 사용이 허용되지 않으면 일반 작업으로 진행합니다.
+- 매 요청마다 **전달된 작업 디렉터리의 `.jev.config.json` 하나만** 읽습니다. 상위 디렉터리 탐색, 전역 설정 병합, 캐시는 없습니다. 프로젝트 루트의 설정을 쓰려면 그 루트를 작업 디렉터리로 전달하세요.
+- 설정이 없거나 읽을 수 없고, JSON·버전·해당 작업 항목이 잘못됐거나, 전체 내용이 16,384자를 초과하면 도구 권고를 추가하지 않고 기존 라우팅을 유지합니다. 등록되지 않은 작업 항목은 적용되지 않습니다.
+- 설정은 로컬에서만 읽으며 **Jev API에 보내지 않습니다**. 파일 내용 참고용 `contextFiles`나 경로 로딩은 지원하지 않습니다.
+
+플랫폼별 전달 경로:
+
+| 플랫폼 | 설정 기준 디렉터리 | 도구 권고 전달 |
+| --- | --- | --- |
+| OMP | extension의 `ctx.cwd`, 없으면 process cwd | `active` 모드에서 현재 턴의 숨김 context 메시지. `observe`/`off`에서는 주입하지 않음 |
+| Claude / Codex | `UserPromptSubmit`의 `cwd`, 없으면 process cwd | 분류 결과의 `additionalContext` |
+| Cursor | `classify_task`의 선택 인자 `cwd`, 없으면 MCP process cwd | MCP 응답의 `advisory`; routing rule이 프로젝트 절대 경로 전달을 안내 |
+| Hermes | native hook 프로세스의 cwd | `pre_llm_call`의 현재 턴 context. Gateway의 프로젝트 디렉터리를 자동 탐색하지 않음 |
+
+분류 실패·낮은 신뢰도에는 디자인 작업을 키워드로 추측하지 않습니다. `@jev:<tier>`는 깊이만 직접 지정하므로 작업 유형은 `general`이며 `design` 설정은 적용되지 않습니다. 사용자 지정 단계에도 도구 권고가 필요하면 `general` 항목을 사용하세요.
+
+**도구 설치 여부·사용 권한·실제 호출은 호스트 에이전트의 책임입니다.** Jev는 현재 tool/MCP registry에서 사용 가능한 도구를 확인하도록 권고할 뿐, MCP를 직접 실행하거나 설치하지 않습니다. `opendesign`의 `model`은 OpenDesign 실행에 전달하고, `reasoningEffort`는 호스트가 지원할 때 적용하거나 요청 지침으로 전달합니다. OpenDesign의 현재 `start_run` API에는 별도 reasoning-effort 필드가 없으므로 `high`는 프로젝트 권고값이지 강제 실행 옵션은 아닙니다. 프로젝트 설정은 명령·인자·API 키·서버 등록을 지원하지 않으며 승인이나 플랫폼 규칙을 우회하지 않습니다. 위임 시에도 이 선호와 fallback을 전달하도록 안내합니다. 설치 스크립트는 공통 로더만 설치하고 프로젝트 설정은 전역 위치에 복사하지 않습니다.
+
+설정 경계 검증: `node --test tests/jev-project-config.test.mjs`
 
 ## Claude Code (advisory)
 

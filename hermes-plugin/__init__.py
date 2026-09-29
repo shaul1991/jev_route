@@ -37,6 +37,7 @@ def pre_llm_call(**kwargs):
             "otherwise continue in this session. Hermes delegate_task uses the globally configured "
             "delegation model (or inherits the parent model), not a per-task tier model. "
             "This suggestion does not change the current model, force delegation, or act as a security boundary."
+            + (f" {route['toolAdvice']}" if route.get("toolAdvice") else "")
         )
     except (OSError, subprocess.TimeoutExpired, ValueError, KeyError, TypeError):
         return None

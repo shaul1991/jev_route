@@ -28,6 +28,7 @@ export function buildRoutingQuestions() {
       type: "choice",
       instructions: "What is the primary work artifact or activity in this request? This is independent of the ALM role that owns it.",
       criteria: {
+        design: "Create or refine a visual design, UI/UX concept, layout, or design artifact. Not system architecture, database design, or ordinary code maintenance.",
         implementation: "Change executable code, configuration, infrastructure, or other implemented behavior.",
         documentation: "Create or update a durable document, specification, explanation, or source-of-truth record.",
         planning: "Define requirements, priorities, milestones, decisions, or an execution plan.",

@@ -2,6 +2,7 @@
 import { requestJev } from "../shared/jev-api.mjs"
 import { ALM_ROLE_CRITERIA, buildRoutingQuestions, ROUTING_THRESHOLDS } from "../shared/jev-routing.mjs"
 import { readFileSync } from "node:fs"
+import { projectToolAdvice } from "../shared/jev-project-config.mjs"
 const claudeConfigJson = JSON.parse(readFileSync(new URL("../config/claude.json", import.meta.url), "utf8"))
 
 function loadClaudeConfig(value) {
@@ -22,8 +23,9 @@ const CLAUDE_CONFIG = loadClaudeConfig(claudeConfigJson)
 const API_KEY = process.env.TYPESAFE_API_KEY
 const MAX_REQUEST_CHARS = CLAUDE_CONFIG.maxPromptChars
 const SECRET_PATTERN = /-----BEGIN [A-Z ]*PRIVATE KEY-----|(?:api[_-]?key|access[_-]?token|secret|password)\s*[:=]|authorization:\s*bearer\s+/i
-function delegationAdvice(mode) {
-  return `Recommended Claude subagent: jev-${mode.toLowerCase()} (Agent tool subagent_type). If delegation fits the task, send it the actual request; otherwise handle it in the current session. The subagent has its own configured model, but the parent session model is not switched. This is advisory, not a security boundary.`
+async function delegationAdvice(mode, work, cwd) {
+  const toolAdvice = await projectToolAdvice(work, cwd)
+  return `Recommended Claude subagent: jev-${mode.toLowerCase()} (Agent tool subagent_type). If delegation fits the task, send it the actual request; otherwise handle it in the current session. The subagent has its own configured model, but the parent session model is not switched. This is advisory, not a security boundary.${toolAdvice ? ` ${toolAdvice}` : ""}`
 }
 
 function outputContext(context) {
@@ -40,12 +42,13 @@ async function main() {
   for await (const chunk of process.stdin) raw += chunk
   const input = JSON.parse(raw)
   const prompt = typeof input.prompt === "string" ? input.prompt : ""
+  const cwd = typeof input.cwd === "string" ? input.cwd : process.cwd()
   if (!prompt.trim() || prompt.length > MAX_REQUEST_CHARS || /```/.test(prompt) || SECRET_PATTERN.test(prompt)) return
   if (!CLAUDE_CONFIG.enabled) return
   const override = /^\s*@jev:(trivial|fast|normal|deep|critical)\b/i.exec(prompt)
   if (override) {
     const mode = override[1].toUpperCase()
-    outputContext(`Jev advisory route: general/general/${mode} (explicit override). ${delegationAdvice(mode)}`)
+    outputContext(`Jev advisory route: general/general/${mode} (explicit override). ${await delegationAdvice(mode, "general", cwd)}`)
     return
   }
   if (!API_KEY) return
@@ -75,12 +78,12 @@ async function main() {
     const role = ALM_ROLE_CRITERIA[roleAnswer?.choice] && typeof roleAnswer.confidence === "number" && roleAnswer.confidence >= ROUTING_THRESHOLDS.roleConfidence
       ? roleAnswer.choice
       : "general"
-    const workTypes = ["implementation", "documentation", "planning", "verification", "review", "investigation", "delivery", "general"]
+    const workTypes = ["implementation", "design", "documentation", "planning", "verification", "review", "investigation", "delivery", "general"]
     const workAnswer = answers?.work_type
     const work = workTypes.includes(workAnswer?.choice) && typeof workAnswer.confidence === "number" && workAnswer.confidence >= ROUTING_THRESHOLDS.workConfidence
       ? workAnswer.choice
       : "general"
-    outputContext(`Jev advisory route: ${role}/${work}/${mode}. ${delegationAdvice(mode)}`)
+    outputContext(`Jev advisory route: ${role}/${work}/${mode}. ${await delegationAdvice(mode, work, cwd)}`)
   } finally {
     clearTimeout(timer)
   }
