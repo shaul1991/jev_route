@@ -29,17 +29,36 @@ export async function projectToolAdvice(workType, cwd = process.cwd()) {
       if (profile === undefined) return tool
       if (!profile || typeof profile !== "object" || Array.isArray(profile)) return ""
       const keys = Object.keys(profile)
-      if (keys.some(key => key !== "model" && key !== "reasoningEffort")) return ""
+      if (keys.some(key => key !== "model" && key !== "reasoningEffort" && key !== "project")) return ""
       if (profile.model !== undefined && (typeof profile.model !== "string" || !MODEL_ID.test(profile.model))) return ""
       if (profile.reasoningEffort !== undefined && !REASONING_EFFORTS.has(profile.reasoningEffort)) return ""
+      let projectReference = ""
+      if (profile.project !== undefined) {
+        const project = profile.project
+        if (
+          tool !== "opendesign"
+          || !project || typeof project !== "object" || Array.isArray(project)
+          || Object.keys(project).some(key => key !== "id" && key !== "url")
+          || typeof project.id !== "string" || !/^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$/.test(project.id)
+          || typeof project.url !== "string" || project.url.length > 2_048 || /\s/.test(project.url)
+        ) return ""
+        try {
+          const url = new URL(project.url)
+          if (!["http:", "https:"].includes(url.protocol) || url.username || url.password || url.search || url.hash) return ""
+        } catch {
+          return ""
+        }
+        projectReference = `OpenDesign project reference: id ${project.id}, URL ${project.url}.`
+      }
       const settings = [
         profile.model ? `model ${profile.model}` : "",
         profile.reasoningEffort ? `${profile.reasoningEffort} reasoning effort` : "",
       ].filter(Boolean)
-      return settings.length ? `${tool} (${settings.join(", ")})` : tool
+      const preference = settings.length ? `${tool} (${settings.join(", ")})` : tool
+      return projectReference ? `${preference}. ${projectReference}` : preference
     })
     if (profiles.some(profile => !profile)) return ""
-    return `Project tool preference for ${workType}: prefer ${profiles.join(", ")} in the listed order when suitable and available in the host's current tool/MCP registry. When invoking a preferred tool, honor its per-tool model and reasoning settings. If unavailable or not permitted, continue with the normal workflow. This is advisory, not permission to install, invoke, or grant access to tools. Respect host tool instructions and approvals; pass this preference and fallback when delegating.`
+    return `Project tool preference for ${workType}: prefer ${profiles.join(", ")} in the listed order when suitable and available in the host's current tool/MCP registry. When invoking a preferred tool, honor its per-tool model, reasoning, and project reference settings. If unavailable or not permitted, continue with the normal workflow. This is advisory, not permission to install, invoke, or grant access to tools. Respect host tool instructions and approvals; pass this preference and fallback when delegating.`
   } catch {
     return ""
   }
