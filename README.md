@@ -89,48 +89,13 @@ make install PLATFORM=hermes         # Hermes plugin 설치·활성화
 
 ## 프로젝트별 도구 설정: `.jev.config.json`
 
-작업을 실행할 프로젝트 디렉터리에 다음 파일을 둡니다. 이 저장소는 디자인 작업에 `opendesign`을 우선 제안하고 고정 모델 ID `claude-opus-5-5`와 `high` 추론 강도를 요청합니다.
+프로젝트 디렉터리별로 work type에 맞는 도구/MCP 선호(모델·추론 강도 포함)를 advisory로 덧붙입니다. 플랫폼 중립 스키마이며, 파일이 없으면 기존 라우팅을 그대로 유지합니다.
 
-```json
-{
-  "version": 1,
-  "tasks": {
-    "design": {
-      "tools": ["opendesign"],
-      "toolOptions": {
-        "opendesign": {
-          "model": "claude-opus-5-5",
-          "reasoningEffort": "high"
-        }
-      },
-      "fallback": "normal"
-    }
-  }
-}
+```bash
+cp .jev.config.json.example .jev.config.json
 ```
-`tasks`의 키는 `implementation`, `design`, `documentation`, `planning`, `verification`, `review`, `investigation`, `delivery`, `general`입니다. Jev의 work type 결과와 **정확히 일치하는 항목만** 적용합니다. 예를 들어 `verification`에 `"tools": ["playwright"]`를 추가할 수 있습니다. `design`은 시각적 UI/UX·레이아웃·디자인 산출물 제작/수정이며, 시스템 아키텍처나 데이터베이스 설계 자체를 뜻하지 않습니다.
 
-- `tools`: 호스트에 연결된 도구 또는 MCP의 식별자 목록. 나열한 순서대로 작업에 적합하고 사용 가능한 도구를 우선 제안합니다. 1~16개이며 각 이름은 영문자로 시작하고 영문자·숫자·`_`·`.`·`:`·`-`만 포함하는 최대 128자 문자열입니다.
-- `toolOptions`: 목록에 선언한 도구별 실행 선호입니다. `model`은 최대 128자의 모델 ID이고, `reasoningEffort`는 `minimal`, `low`, `medium`, `high`, `xhigh`, `max` 중 하나입니다. 이 저장소는 `opendesign`에 Anthropic API용 Claude Opus 5.5 고정 모델 ID `claude-opus-5-5`와 `high`를 요청합니다. OpenDesign의 Claude 어댑터는 모델 ID를 Claude Code에 전달하며, provider/account 접근 권한에 따라 요청이 거부될 수 있습니다.
-- `fallback`: 생략하거나 `"normal"`만 지정할 수 있습니다. 도구가 없거나 사용이 허용되지 않으면 일반 작업으로 진행합니다.
-- 매 요청마다 **전달된 작업 디렉터리의 `.jev.config.json` 하나만** 읽습니다. 상위 디렉터리 탐색, 전역 설정 병합, 캐시는 없습니다. 프로젝트 루트의 설정을 쓰려면 그 루트를 작업 디렉터리로 전달하세요.
-- 설정이 없거나 읽을 수 없고, JSON·버전·해당 작업 항목이 잘못됐거나, 전체 내용이 16,384자를 초과하면 도구 권고를 추가하지 않고 기존 라우팅을 유지합니다. 등록되지 않은 작업 항목은 적용되지 않습니다.
-- 설정은 로컬에서만 읽으며 **Jev API에 보내지 않습니다**. 파일 내용 참고용 `contextFiles`나 경로 로딩은 지원하지 않습니다.
-
-플랫폼별 전달 경로:
-
-| 플랫폼 | 설정 기준 디렉터리 | 도구 권고 전달 |
-| --- | --- | --- |
-| OMP | extension의 `ctx.cwd`, 없으면 process cwd | `active` 모드에서 현재 턴의 숨김 context 메시지. `observe`/`off`에서는 주입하지 않음 |
-| Claude / Codex | `UserPromptSubmit`의 `cwd`, 없으면 process cwd | 분류 결과의 `additionalContext` |
-| Cursor | `classify_task`의 선택 인자 `cwd`, 없으면 MCP process cwd | MCP 응답의 `advisory`; routing rule이 프로젝트 절대 경로 전달을 안내 |
-| Hermes | native hook 프로세스의 cwd | `pre_llm_call`의 현재 턴 context. Gateway의 프로젝트 디렉터리를 자동 탐색하지 않음 |
-
-분류 실패·낮은 신뢰도에는 디자인 작업을 키워드로 추측하지 않습니다. `@jev:<tier>`는 깊이만 직접 지정하므로 작업 유형은 `general`이며 `design` 설정은 적용되지 않습니다. 사용자 지정 단계에도 도구 권고가 필요하면 `general` 항목을 사용하세요.
-
-**도구 설치 여부·사용 권한·실제 호출은 호스트 에이전트의 책임입니다.** Jev는 현재 tool/MCP registry에서 사용 가능한 도구를 확인하도록 권고할 뿐, MCP를 직접 실행하거나 설치하지 않습니다. `opendesign`의 `model`은 OpenDesign 실행에 전달하고, `reasoningEffort`는 호스트가 지원할 때 적용하거나 요청 지침으로 전달합니다. OpenDesign의 현재 `start_run` API에는 별도 reasoning-effort 필드가 없으므로 `high`는 프로젝트 권고값이지 강제 실행 옵션은 아닙니다. 프로젝트 설정은 명령·인자·API 키·서버 등록을 지원하지 않으며 승인이나 플랫폼 규칙을 우회하지 않습니다. 위임 시에도 이 선호와 fallback을 전달하도록 안내합니다. 설치 스크립트는 공통 로더만 설치하고 프로젝트 설정은 전역 위치에 복사하지 않습니다.
-
-설정 경계 검증: `node --test tests/jev-project-config.test.mjs`
+전체 스키마, 필드 제약, 플랫폼별 전달 경로, 검증 명령, 책임 경계는 [`.jev.config.json.md`](.jev.config.json.md)를 보세요. 즉시 쓸 수 있는 기본 예시는 [`.jev.config.json.example`](.jev.config.json.example)입니다.
 
 ## Claude Code (advisory)
 
