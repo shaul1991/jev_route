@@ -45,6 +45,15 @@
       },
       "fallback": { "light": ["@plan", "@requirements", "@default"], "deep": ["@plan", "@slow"] }
     },
+    "product_design": {
+      "tasks": {
+        "design": { "light": ["@design", "@plan"], "deep": ["@design", "@slow"] },
+        "documentation": { "light": ["@design", "@plan"], "deep": ["@design", "@slow"] },
+        "review": { "light": ["@design", "@review"], "deep": ["@design", "@slow"] },
+        "investigation": { "light": ["@analyze", "@design"], "deep": ["@design", "@slow"] }
+      },
+      "fallback": { "light": ["@design", "@default"], "deep": ["@design", "@slow"] }
+    },
     "architecture": {
       "tasks": {
         "implementation": { "light": ["@architect", "@build"], "deep": ["@architect", "@slow"] },

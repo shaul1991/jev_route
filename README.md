@@ -5,12 +5,41 @@ OMP 확장, Claude Code·Codex·Cursor·Hermes advisory 플러그인, macOS 설�
 ## 제공 기능
 
 - 사용자 요청을 Jev의 `ALM role` / `work type` / 5단계 작업 깊이로 분류합니다. OMP에서는 결과를 역할 alias와 thinking level로 연결.
+- 같은 요청에서 기술 `specialty`(웹·앱·백엔드·데이터·인프라)를 함께 판정해, 해당 분야 점검 항목을 advisory context로 덧붙입니다. 모델 경로는 바꾸지 않습니다.
 - routing decision, 적용 모델, audit 결과를 프로필별 JSONL로 기록.
 - `/jev roles`, `/jev roles routes`, `/jev log [n]`으로 역할 경로와 기록을 확인.
-- 프로젝트의 `.jev.config.json`으로 작업별 도구·MCP 사용 선호를 전달합니다. 시각적 디자인 작업은 `design`으로 분류하며, 도구가 없으면 일반 작업으로 진행합니다.
+- 프로젝트의 `.jev.config.json`으로 작업별 도구·MCP 사용 선호를 전달합니다. 시각적 디자인 작업은 `design` work type으로, UI/UX 책임은 `product_design` 역할로 분류하며, 도구가 없으면 일반 작업으로 진행합니다.
 - **observe-only Tool Risk Gate**: 위험 신호가 있는 `bash` 호출을 분류하지만 실행을 차단·수정·지연하지 않음.
 
 Tool Risk Gate는 원문 command, 경로, 파일 내용, 인자값을 Jev에 전송하거나 로그에 남기지 않습니다. 로컬에서 만든 위험 신호와 명령 길이만 전송합니다. 시크릿 가능성이 있으면 Jev API 호출 없이 로컬 기록만 남깁니다.
+
+## 분류 축
+
+한 번의 Jev 요청에서 네 가지 질문을 병렬로 묻습니다. 각 축은 서로 독립적이며, 신뢰도가 기준(0.6)에 못 미치면 `general` 또는 `none`으로 처리합니다.
+
+| 축 | 의미 | 결과가 쓰이는 곳 |
+| --- | --- | --- |
+| `alm_role` | 요청의 원본(source of truth)과 1차 책임을 가진 ALM 역할 | OMP 역할 경로(`config/omp.json`의 `routes`) |
+| `work_type` | 주된 산출물·활동 | OMP 역할 경로, `.jev.config.json` 도구 선호 |
+| `task_mode` | 5단계 작업 깊이 | tier alias, thinking level, subagent 권장 |
+| `specialty` | 전용 점검이 필요한 기술 분야 | 점검 항목 advisory만 추가. 모델 경로·위임에는 영향 없음 |
+
+ALM role:
+
+| 역할 | 책임 |
+| --- | --- |
+| `product_planning` | 문제, 요구 사항, 우선순위, 사용자 성과, 수용 기준. 상세 화면·상호작용 설계는 제외 |
+| `product_design` | 사용자 흐름, 정보 구조, 화면과 상태, 상호작용, 시각 방향, 반응형, 접근성 |
+| `architecture` | 시스템 경계, 기술 방향, 인터페이스, 데이터 계약. UI·시각 디자인은 제외 |
+| `development` | 코드베이스와 현재 동작 |
+| `quality_assurance` | 수용 기준, 회귀, 검증, 결함 예방 |
+| `operations_delivery` | 빌드, CI, 배포, 런타임 설정, 릴리스, 운영 유지보수·장애, 시스템 폐기 |
+| `governance_risk` | 보안·컴플라이언스, 권한, 정책 증거 |
+| `analysis_research` | 근거 수집, 대안 비교, 설명 분석 |
+
+`specialty`는 `web_frontend`, `mobile_app`, `backend_api`, `data_database`, `infrastructure_platform`, `none` 중 하나입니다. 분야가 판정되면 예를 들어 `data_database`에는 마이그레이션 되돌림 가능성, 데이터 정합성, 쿼리 성능, 백업·복구, 보존·삭제 규칙을 점검하라는 문구가 context에 붙습니다. 분야별 전용 route나 모델 alias는 두지 않습니다. 같은 분야 작업이 반복되고 전용 모델 배정이 실제로 이점을 보일 때 route 추가를 검토하세요.
+
+**분류는 권한이 아닙니다.** `alm_role`, `specialty`, `CRITICAL` 모두 어떤 모델·점검 관점을 쓸지 고르는 신호일 뿐, 그 역할의 agent가 범위·설계·배포를 승인하거나 tool 실행을 허가한다는 의미가 아닙니다. 승인과 실행 권한은 호스트 agent의 정책과 사용자에게 있습니다.
 
 ## 5단계 라우팅과 OMP model role
 

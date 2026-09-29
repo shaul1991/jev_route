@@ -1,6 +1,6 @@
 import { mkdir, open, readFile, writeFile } from "node:fs/promises"
 import { requestJev } from "../shared/jev-api.mjs"
-import { ALM_ROLE_CRITERIA, buildRoutingQuestions, ROUTING_THRESHOLDS } from "../shared/jev-routing.mjs"
+import { ALM_ROLE_CRITERIA, buildRoutingQuestions, readSpecialty, ROUTING_THRESHOLDS, specialtyAdvice } from "../shared/jev-routing.mjs"
 import { projectToolAdvice } from "../shared/jev-project-config.mjs"
 import ompConfigJson from "../config/omp.json" with { type: "json" }
 
@@ -49,6 +49,7 @@ type ToolRiskSource = "jev" | "local"
 type AlmRole =
   | "development"
   | "product_planning"
+  | "product_design"
   | "architecture"
   | "quality_assurance"
   | "operations_delivery"
@@ -103,6 +104,9 @@ type Decision = {
   confidence?: number
   roleConfidence?: number
   workConfidence?: number
+  /** Advisory specialist checklist signal; never changes the model route. */
+  specialty?: string
+  specialtyConfidence?: number
   jevModel?: string
   latencyMs?: number
   inputTokens?: number
@@ -620,6 +624,7 @@ function decideMode(choice: unknown, confidence: unknown): Mode | undefined {
 function asAlmRole(value: unknown): AlmRole | undefined {
   return value === "development"
     || value === "product_planning"
+    || value === "product_design"
     || value === "architecture"
     || value === "quality_assurance"
     || value === "operations_delivery"
@@ -682,6 +687,7 @@ async function queryJev(prompt: string): Promise<Decision> {
     const mode = matchedPolicies.reduce((selected, policy) => moreConservative(selected, policy.minMode), baseMode)
     const role = asAlmRole(answer.roleChoice)
     const work = asWorkType(answer.workChoice)
+    const specialty = readSpecialty(asRecord(asRecord(payload)?.answers))
     return {
       mode,
       almRole: role && typeof answer.roleConfidence === "number" && answer.roleConfidence >= ROLE_CONFIDENCE_MIN
@@ -696,6 +702,8 @@ async function queryJev(prompt: string): Promise<Decision> {
       confidence: typeof answer.modeConfidence === "number" ? answer.modeConfidence : undefined,
       roleConfidence: typeof answer.roleConfidence === "number" ? answer.roleConfidence : undefined,
       workConfidence: typeof answer.workConfidence === "number" ? answer.workConfidence : undefined,
+      specialty: specialty.specialty,
+      specialtyConfidence: specialty.confidence,
       jevModel: answer.model,
       latencyMs: Date.now() - startedAt,
       inputTokens: answer.inputTokens,
@@ -887,6 +895,7 @@ async function logDecision(
     source: decision.source,
     alm_role: decision.almRole,
     work_type: decision.workType,
+    specialty: decision.specialty,
     selected_mode: decision.mode,
     base_mode: decision.baseMode,
     policy_ids: decision.policyIds,
@@ -900,6 +909,7 @@ async function logDecision(
     confidence: decision.confidence,
     role_confidence: decision.roleConfidence,
     work_confidence: decision.workConfidence,
+    specialty_confidence: decision.specialtyConfidence,
     jev_model: decision.jevModel,
     latency_ms: decision.latencyMs,
     input_tokens: decision.inputTokens,
@@ -1158,7 +1168,7 @@ async function applyDecision(
     const policySuffix = decision.policyIds && decision.policyIds.length > 0
       ? `; policy ${decision.policyIds.join(",")}`
       : ""
-    updateStatus(ctx, `Jev ${decision.almRole}/${decision.workType}/${decision.mode} → ${routeLabel(route, selection)}${policySuffix}`)
+    updateStatus(ctx, `Jev ${decisionLabel(decision)} → ${routeLabel(route, selection)}${policySuffix}`)
     return { applied: true, route: appliedRoute(route, selection) }
   }
 
@@ -1273,6 +1283,7 @@ type LogRow = {
   source?: string
   almRole?: string
   workType?: string
+  specialty?: string
   mode?: string
   confidence?: number
   applied: boolean
@@ -1305,6 +1316,7 @@ function readLogRow(line: string): LogRow | undefined {
     source: text("source"),
     almRole: text("alm_role"),
     workType: text("work_type"),
+    specialty: text("specialty"),
     mode: text("selected_mode"),
     confidence: num("confidence"),
     applied: record.applied === true,
@@ -1332,9 +1344,17 @@ async function tailLogRows(path: string, limit: number): Promise<LogRow[]> {
   return rows.slice(-limit)
 }
 
+function specialtySuffix(specialty: string | undefined): string {
+  return specialty && specialty !== "none" ? ` +${specialty}` : ""
+}
+
+function decisionLabel(decision: Decision): string {
+  return `${decision.almRole}/${decision.workType}/${decision.mode}${specialtySuffix(decision.specialty)}`
+}
+
 function formatLogRow(row: LogRow): string {
   const time = row.timestamp ? row.timestamp.slice(11, 19) : "--:--:--"
-  const judgement = `${row.almRole ?? "?"}/${row.workType ?? "?"}/${row.mode ?? "?"}`
+  const judgement = `${row.almRole ?? "?"}/${row.workType ?? "?"}/${row.mode ?? "?"}${specialtySuffix(row.specialty)}`
   const confidence = row.confidence === undefined ? "" : ` ${row.confidence.toFixed(2)}`
   const target = row.model && row.model !== "unresolved"
     ? `${row.model}:${row.thinking ?? "?"}`
@@ -1490,7 +1510,7 @@ export default function (pi: ExtensionAPI): void {
           : ""
         report(
           ctx,
-          `Jev ${decision.almRole}/${decision.workType}/${decision.mode} → ${routeLabel(route, selection)} (${decision.confidence?.toFixed(2) ?? "n/a"}, ${decision.latencyMs} ms${policies})`,
+          `Jev ${decisionLabel(decision)} → ${routeLabel(route, selection)} (${decision.confidence?.toFixed(2) ?? "n/a"}, ${decision.latencyMs} ms${policies})`,
         )
       } catch (error) {
         report(ctx, `Jev request failed: ${error instanceof Error ? error.message : "unknown_error"}`, "error")
@@ -1540,7 +1560,7 @@ export default function (pi: ExtensionAPI): void {
     if (routerMode === "observe") {
       const plannedRoute = routeFor(decision.almRole, decision.workType, decision.mode)
       const planned = appliedRoute(plannedRoute, resolveRoute(ctx, plannedRoute))
-      updateStatus(ctx, `Jev ${decision.almRole}/${decision.workType}/${decision.mode} (${decision.source}; observe)`)
+      updateStatus(ctx, `Jev ${decisionLabel(decision)} (${decision.source}; observe)`)
       void logDecision(decision, routerMode, false, trace, planned)
       return
     }
@@ -1560,9 +1580,12 @@ export default function (pi: ExtensionAPI): void {
       compactions: 0,
     }
     void logDecision(decision, routerMode, applied, trace, route)
-    const toolAdvice = await projectToolAdvice(decision.workType, ctx.cwd)
-    if (toolAdvice) {
-      return { message: { customType: "jev-project-tools", content: toolAdvice, display: false } }
+    const advice = [
+      specialtyAdvice(decision.specialty ?? "none"),
+      await projectToolAdvice(decision.workType, ctx.cwd),
+    ].filter(Boolean).join(" ")
+    if (advice) {
+      return { message: { customType: "jev-route-advice", content: advice, display: false } }
     }
   })
 

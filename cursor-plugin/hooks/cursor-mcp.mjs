@@ -4,24 +4,25 @@ import { existsSync } from "node:fs"
 
 const sharedPath = existsSync(new URL("../shared/jev-api.mjs", import.meta.url)) ? "../shared/" : "../../shared/"
 const { requestJev } = await import(new URL(`${sharedPath}jev-api.mjs`, import.meta.url))
-const { ALM_ROLE_CRITERIA, buildRoutingQuestions, ROUTING_THRESHOLDS } = await import(new URL(`${sharedPath}jev-routing.mjs`, import.meta.url))
+const { ALM_ROLE_CRITERIA, buildRoutingQuestions, readSpecialty, ROUTING_THRESHOLDS, specialtyAdvice } = await import(new URL(`${sharedPath}jev-routing.mjs`, import.meta.url))
 
 const { projectToolAdvice } = await import(new URL(`${sharedPath}jev-project-config.mjs`, import.meta.url))
 const SECRET_PATTERN = /-----BEGIN [A-Z ]*PRIVATE KEY-----|(?:api[_-]?key|access[_-]?token|secret|password)\s*[:=]|authorization:\s*bearer\s+/i
 const MODES = ["TRIVIAL", "FAST", "NORMAL", "DEEP", "CRITICAL"]
 const WORK_TYPES = ["implementation", "design", "documentation", "planning", "verification", "review", "investigation", "delivery", "general"]
 
-async function routeAdvice(role, work, mode, source = "Jev", cwd = process.cwd()) {
+async function routeAdvice(role, work, mode, source = "Jev", cwd = process.cwd(), specialty = "none") {
   const agent = `jev-${mode.toLowerCase()}`
-  const toolAdvice = await projectToolAdvice(work, cwd)
+  const extra = [specialtyAdvice(specialty), await projectToolAdvice(work, cwd)].filter(Boolean).join(" ")
   return {
     status: "classified",
     source,
     role,
     work,
     mode,
+    specialty,
     recommendedAgent: agent,
-    advisory: `Recommended Cursor subagent: ${agent}. Delegate the actual task only when it benefits from delegation; otherwise work in the parent session. This does not switch the parent model or force delegation.${toolAdvice ? ` ${toolAdvice}` : ""}`,
+    advisory: `Recommended Cursor subagent: ${agent}. Delegate the actual task only when it benefits from delegation; otherwise work in the parent session. This does not switch the parent model or force delegation.${extra ? ` ${extra}` : ""}`,
   }
 }
 
@@ -61,7 +62,7 @@ async function classify(prompt, cwd) {
     const work = WORK_TYPES.includes(workAnswer?.choice) && typeof workAnswer.confidence === "number" && workAnswer.confidence >= ROUTING_THRESHOLDS.workConfidence
       ? workAnswer.choice
       : "general"
-    return routeAdvice(role, work, mode, "Jev", cwd)
+    return routeAdvice(role, work, mode, "Jev", cwd, readSpecialty(answers).specialty)
   } catch {
     return { status: "unavailable", reason: "Jev request failed or timed out" }
   } finally {
@@ -94,7 +95,7 @@ for await (const line of input) {
     respond(message.id, {
       tools: [{
         name: "classify_task",
-        description: "Classify the user's current request into ALM role, work type, and one of five advisory task modes.",
+        description: "Classify the user's current request into ALM role, work type, one of five advisory task modes, and an optional technical specialty checklist.",
         inputSchema: {
           type: "object",
           properties: {

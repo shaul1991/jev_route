@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 import { readFileSync } from "node:fs"
 import { requestJev } from "../shared/jev-api.mjs"
-import { ALM_ROLE_CRITERIA, buildRoutingQuestions, ROUTING_THRESHOLDS } from "../shared/jev-routing.mjs"
+import { ALM_ROLE_CRITERIA, buildRoutingQuestions, readSpecialty, ROUTING_THRESHOLDS, specialtyAdvice } from "../shared/jev-routing.mjs"
 import { projectToolAdvice } from "../shared/jev-project-config.mjs"
 
 const config = JSON.parse(readFileSync(new URL("../config/codex.json", import.meta.url), "utf8"))
@@ -12,10 +12,11 @@ const maxChars = Math.min(config.maxPromptChars, ROUTING_THRESHOLDS.maxRequestCh
 const secretPattern = /-----BEGIN [A-Z ]*PRIVATE KEY-----|(?:api[_-]?key|access[_-]?token|secret|password)\s*[:=]|authorization:\s*bearer\s+/i
 const modes = ["TRIVIAL", "FAST", "NORMAL", "DEEP", "CRITICAL"]
 
-async function outputAdvice(role, work, mode, cwd) {
+async function outputAdvice(role, work, mode, cwd, specialty = "none") {
   const agent = `jev_${mode.toLowerCase()}`
-  const toolAdvice = await projectToolAdvice(work, cwd)
-  const context = `Jev advisory route: ${role}/${work}/${mode}. Recommended Codex custom subagent: ${agent}. If the task benefits from delegation, spawn this agent with the user's actual task; otherwise work in the parent session. The subagent has its own configured model. This hook does not switch the parent model or force delegation, and is not a security boundary.${toolAdvice ? ` ${toolAdvice}` : ""}`
+  const extra = [specialtyAdvice(specialty), await projectToolAdvice(work, cwd)].filter(Boolean).join(" ")
+  const label = specialty === "none" ? "" : ` +${specialty}`
+  const context = `Jev advisory route: ${role}/${work}/${mode}${label}. Recommended Codex custom subagent: ${agent}. If the task benefits from delegation, spawn this agent with the user's actual task; otherwise work in the parent session. The subagent has its own configured model. This hook does not switch the parent model or force delegation, and is not a security boundary.${extra ? ` ${extra}` : ""}`
   process.stdout.write(`${JSON.stringify({ hookSpecificOutput: { hookEventName: "UserPromptSubmit", additionalContext: context } })}\n`)
 }
 
@@ -61,7 +62,7 @@ async function main() {
     const work = workTypes.includes(workAnswer?.choice) && typeof workAnswer.confidence === "number" && workAnswer.confidence >= ROUTING_THRESHOLDS.workConfidence
       ? workAnswer.choice
       : "general"
-    await outputAdvice(role, work, mode, cwd)
+    await outputAdvice(role, work, mode, cwd, readSpecialty(answers).specialty)
   } finally {
     clearTimeout(timer)
   }

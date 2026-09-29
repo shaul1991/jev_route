@@ -5,16 +5,16 @@ const bundled = existsSync(new URL("./shared/jev-api.mjs", import.meta.url))
 const shared = bundled ? "./shared/" : "../shared/"
 const settingsPath = bundled ? "./config/hermes.json" : "../config/hermes.json"
 const { requestJev } = await import(new URL(`${shared}jev-api.mjs`, import.meta.url))
-const { ALM_ROLE_CRITERIA, buildRoutingQuestions, ROUTING_THRESHOLDS } = await import(new URL(`${shared}jev-routing.mjs`, import.meta.url))
+const { ALM_ROLE_CRITERIA, buildRoutingQuestions, readSpecialty, ROUTING_THRESHOLDS, specialtyAdvice } = await import(new URL(`${shared}jev-routing.mjs`, import.meta.url))
 const settings = JSON.parse(readFileSync(new URL(settingsPath, import.meta.url), "utf8"))
 const { projectToolAdvice } = await import(new URL(`${shared}jev-project-config.mjs`, import.meta.url))
 const MODES = ["TRIVIAL", "FAST", "NORMAL", "DEEP", "CRITICAL"]
 const WORK_TYPES = ["implementation", "design", "documentation", "planning", "verification", "review", "investigation", "delivery", "general"]
 const SECRET_PATTERN = /-----BEGIN [A-Z ]*PRIVATE KEY-----|(?:api[_-]?key|access[_-]?token|secret|password)\s*[:=]|authorization:\s*bearer\s+/i
 
-async function classified(role, work, mode, cwd) {
-  const toolAdvice = await projectToolAdvice(work, cwd)
-  return { status: "classified", role, work, mode, toolAdvice }
+async function classified(role, work, mode, cwd, specialty = "none") {
+  const toolAdvice = [specialtyAdvice(specialty), await projectToolAdvice(work, cwd)].filter(Boolean).join(" ")
+  return { status: "classified", role, work, mode, specialty, toolAdvice }
 }
 
 async function route() {
@@ -47,7 +47,7 @@ async function route() {
     const role = ALM_ROLE_CRITERIA[roleAnswer?.choice] && typeof roleAnswer.confidence === "number" && roleAnswer.confidence >= ROUTING_THRESHOLDS.roleConfidence ? roleAnswer.choice : "general"
     const workAnswer = answers?.work_type
     const work = WORK_TYPES.includes(workAnswer?.choice) && typeof workAnswer.confidence === "number" && workAnswer.confidence >= ROUTING_THRESHOLDS.workConfidence ? workAnswer.choice : "general"
-    return classified(role, work, mode, cwd)
+    return classified(role, work, mode, cwd, readSpecialty(answers).specialty)
   } finally {
     clearTimeout(timer)
   }

@@ -30,8 +30,10 @@ def pre_llm_call(**kwargs):
         if route.get("status") != "classified":
             return None
         mode = route["mode"]
+        specialty = route.get("specialty")
+        label = f" +{specialty}" if specialty and specialty != "none" else ""
         return (
-            f"Jev advisory route: {route['role']}/{route['work']}/{mode}. "
+            f"Jev advisory route: {route['role']}/{route['work']}/{mode}{label}. "
             "Use this classification to set an appropriate verification depth. "
             "If delegation helps, use delegate_task with the user's actual goal and full context; "
             "otherwise continue in this session. Hermes delegate_task uses the globally configured "
